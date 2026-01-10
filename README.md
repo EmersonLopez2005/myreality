@@ -5,4 +5,4 @@
 
 ## 🚀 一键安装
 ```bash
-bash <(curl -Ls [https://raw.githubusercontent.com/EmersonLopez2005/myreality/main/x.sh](https://raw.githubusercontent.com/EmersonLopez2005/myreality/main/x.sh))
+bash <(curl -Ls https://raw.githubusercontent.com/EmersonLopez2005/myreality/main/x.sh)
