@@ -185,7 +185,7 @@ show_info() {
 menu() {
     clear
     echo "################################################"
-    echo "      极简 Reality 管理面板 (V2.5 适配版)"
+    echo "      极简 Reality 管理面板 "
     echo "      Xray 版本: $($XRAY_BIN version | head -n 1 | awk '{print $2}')"
     echo "################################################"
     echo "1. 查看详细节点配置 (Info)"
