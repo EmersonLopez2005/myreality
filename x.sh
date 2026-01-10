@@ -224,6 +224,7 @@ if [[ ! -f "$XRAY_CONF" ]]; then
     setup_system
     green ">>> 安装完成！输入 'xray' 可调出菜单。"
     show_info
+    exec bash -l
 else
     menu
 fi
