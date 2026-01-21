@@ -184,8 +184,8 @@ setup_ai_routing_ss2022() {
 
     green "正在写入强力路由规则..."
     
-    # 策略解释 (核心修复):
-    # 1. [PRIORITY] YouTube -> 直连 (HK)。必须放在第一位！
+    # 策略解释 :
+    # 1. [PRIORITY] YouTube -> 直连 (HK)。
     # 2. [BLOCK]    UDP 443 -> 针对 Google/OpenAI 拦截。强制 TCP，防止 IPv6/QUIC 绕过。
     # 3. [PROXY]    Google全家桶/OpenAI -> US Proxy。包含 geosite:google，确保账号验证不走 HK IPv6。
     
@@ -291,7 +291,7 @@ JSON
     systemctl restart xray
     if systemctl is-active --quiet xray; then
         echo ""
-        green "✅ 智能分流配置成功！(IPv6 泄露已修复)"
+        green "✅ 分流配置成功！"
     else
         echo ""
         red "❌ 启动失败，请检查端口/密钥！"
