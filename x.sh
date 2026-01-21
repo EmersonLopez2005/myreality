@@ -2,7 +2,7 @@
 set -u
 
 # ==================================================
-# 极简 Reality 管理脚本 (定制版：SS2022 分流)
+# 极简 Reality 管理脚本
 # ==================================================
 
 # --- 全局变量 ---
@@ -19,7 +19,7 @@ blue() { echo -e "\033[36m$1\033[0m"; }
 
 check_root() { [[ $EUID -ne 0 ]] && red "请使用 root 权限运行" && exit 1; }
 
-# --- 1. 基础安装逻辑 (保持原有功能) ---
+# --- 1. 基础安装逻辑 ---
 ask_config() {
     clear
     echo "################################################"
@@ -245,22 +245,32 @@ JSON
     echo "现在访问 Gemini/GPT 将自动转发至 -> $us_addr ($us_method)"
 }
 
+# --- 恢复原版详细信息显示 ---
 show_info() {
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置文件"; return; fi
     source "$ENV_FILE"
     CURRENT_IP=$(curl -s https://api.ipify.org)
-    REMARK="$(hostname)"
+    HOST_NAME=$(hostname)
+    
+    REMARK="${HOST_NAME}"
     LINK="vless://${UUID}@${CURRENT_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${PBK}&sid=${SID}&type=tcp#${REMARK}"
     
     echo ""
-    green "=== 节点信息 (VLESS Reality) ==="
-    echo "地址: ${CURRENT_IP}"
-    echo "端口: ${PORT}"
-    echo "UUID: ${UUID}"
-    echo "SNI : ${SNI}"
-    echo "PBK : ${PBK}"
+    green "=================================="
+    green "       节点配置信息 (VLESS)       "
+    green "=================================="
+    echo "地址 (Address):     ${CURRENT_IP}"
+    echo "端口 (Port):        ${PORT}"
+    echo "协议 (Protocol):    VLESS"
+    echo "用户ID (UUID):      ${UUID}"
+    echo "流控 (Flow):        xtls-rprx-vision"
+    echo "传输 (Network):     tcp"
+    echo "SNI (ServerName):   ${SNI}"
+    echo "指纹 (Fingerprint): chrome"
+    echo "公钥 (Public Key):  ${PBK}"
+    echo "ShortId:            ${SID}"
     echo ""
-    yellow "👇 链接:"
+    yellow "👇 复制下方链接 (V2RayN / NekoBox / Shadowrocket):"
     echo "${LINK}"
     echo ""
 }
@@ -268,14 +278,14 @@ show_info() {
 menu() {
     clear
     echo "################################################"
-    echo "      Reality 管理面板 (SS2022 分流版)"
+    echo "      极简 Reality 管理面板"
     echo "      Xray 版本: $($XRAY_BIN version | head -n 1 | awk '{print $2}')"
     echo "################################################"
-    echo "1. 查看节点配置 (Info)"
-    echo "2. 更新 Xray 内核"
-    echo "3. 重新安装 (重置密钥)"
-    echo "4. 重启服务"
-    echo "5. 卸载脚本"
+    echo "1. 查看详细节点配置 (Info)"
+    echo "2. 更新 Xray 内核 (Update Core)"
+    echo "3. 修改端口/SNI/重置密钥 (Re-Install)"
+    echo "4. 重启服务 (Restart)"
+    echo "5. 卸载脚本 (Uninstall)"
     echo "------------------------------------------------"
     echo "6. 配置 AI 分流 (Gemini -> US SS2022) 🔥"
     echo "------------------------------------------------"
