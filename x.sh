@@ -19,10 +19,12 @@ blue() { echo -e "\033[36m$1\033[0m"; }
 
 # --- 自我更新机制 ---
 self_check() {
+    # 确保本地有脚本文件
     if [[ ! -f "$SCRIPT_PATH" ]] || [[ "${BASH_SOURCE[0]}" != "$SCRIPT_PATH" ]]; then
         curl -o "$SCRIPT_PATH" -Ls "https://raw.githubusercontent.com/EmersonLopez2005/myreality/main/x.sh"
         chmod +x "$SCRIPT_PATH"
     fi
+    # 确保快捷键存在
     if ! grep -q "alias xray=" ~/.bashrc; then
         echo "alias xray='bash $SCRIPT_PATH'" >> ~/.bashrc
         source ~/.bashrc
@@ -80,6 +82,7 @@ generate_config() {
     mkdir -p /etc/xray
     UUID=$(cat /proc/sys/kernel/random/uuid)
     KEYS=$($XRAY_BIN x25519)
+    # 提取 Reality 必须的 key
     PK=$(echo "$KEYS" | sed -n '1p' | awk -F: '{print $2}' | xargs)
     PUB=$(echo "$KEYS" | sed -n '2p' | awk -F: '{print $2}' | xargs)
     SHORT_ID=$(openssl rand -hex 4)
@@ -126,7 +129,7 @@ setup_system() {
     systemctl restart xray
 }
 
-# --- 核心：智能分流 (Gemini + ChatGPT) ---
+# --- 核心：智能分流 (Gemini + ChatGPT + YouTube直连) ---
 setup_ai_routing_ss2022() {
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
     source "$ENV_FILE"
@@ -160,9 +163,9 @@ setup_ai_routing_ss2022() {
     green "正在写入路由规则..."
     
     # 策略解释：
-    # 1. YouTube -> 直连 (HK)。
-    # 2. Gemini/ChatGPT + UDP -> Block (防泄露)。
-    # 3. Gemini/ChatGPT + TCP -> US Proxy。
+    # 1. YouTube -> 直连 (HK) [允许UDP]
+    # 2. Gemini/ChatGPT + UDP -> Block [防泄露]
+    # 3. Gemini/ChatGPT + TCP -> US Proxy
     
     cat > "$XRAY_CONF" <<JSON
 {
@@ -285,22 +288,40 @@ show_info() {
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
     source "$ENV_FILE"
     get_ss_status
+    
+    # 优先获取IPv4
     CURRENT_IP=$(curl -s -4 https://api.ipify.org)
     [[ -z "$CURRENT_IP" ]] && CURRENT_IP=$(curl -s https://api.ipify.org)
+    REMARK="$(hostname)"
     
-    LINK="vless://${UUID}@${CURRENT_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${PBK}&sid=${SID}&type=tcp#$(hostname)"
+    # 完整的 Reality 链接
+    LINK="vless://${UUID}@${CURRENT_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${PBK}&sid=${SID}&type=tcp#${REMARK}"
     
     echo ""
-    green "=== 节点信息 ==="
-    echo "地址: ${CURRENT_IP}"
-    echo "端口: ${PORT}"
-    echo "UUID: ${UUID}"
+    green "=================================="
+    green "       节点配置信息 (Reality)       "
+    green "=================================="
+    echo "地址 (Address):     ${CURRENT_IP}"
+    echo "端口 (Port):        ${PORT}"
+    echo "用户ID (UUID):      ${UUID}"
+    echo "流控 (Flow):        xtls-rprx-vision"
+    echo "传输 (Network):     tcp"
+    echo "伪装域名 (SNI):     ${SNI}"
+    echo "指纹 (Fingerprint): chrome"
+    echo "公钥 (Public Key):  ${PBK}"
+    echo "ShortId:            ${SID}"
+    
+    echo "----------------------------------"
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
-        green "分流: ✅ 开启 (Gemini/GPT -> US | YT -> HK)"
+        echo -e "分流状态 (Route):    \033[32m✅ 已启用\033[0m"
+        echo -e "Gemini/GPT (Target): $SS_IP "
+        echo -e "YouTube (Target):    本地直连"
     else
-        red "分流: ❌ 关闭"
+        echo -e "分流状态 (Route):    \033[31m❌ 未启用 (全部直连)\033[0m"
     fi
-    yellow "👇 链接:"
+    echo "----------------------------------"
+    
+    yellow "👇 复制下方链接 (V2RayN / NekoBox / Shadowrocket):"
     echo "${LINK}"
     echo ""
 }
