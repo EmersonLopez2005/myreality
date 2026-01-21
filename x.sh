@@ -2,7 +2,7 @@
 set -u
 
 # ==================================================
-# Reality 管理脚本
+# Reality 管理脚本 
 # ==================================================
 
 # --- 全局变量 ---
@@ -17,15 +17,17 @@ green() { echo -e "\033[32m$1\033[0m"; }
 yellow() { echo -e "\033[33m$1\033[0m"; }
 blue() { echo -e "\033[36m$1\033[0m"; }
 
-# --- 自我更新机制 ---
-self_check() {
-    if [[ ! -f "$SCRIPT_PATH" ]] || [[ "${BASH_SOURCE[0]}" != "$SCRIPT_PATH" ]]; then
+# --- 自我更新与安装机制 ---
+# 确保脚本即使通过 curl 运行，也会把自己保存到本地
+install_self() {
+    if [[ ! -f "$SCRIPT_PATH" ]]; then
         curl -o "$SCRIPT_PATH" -Ls "https://raw.githubusercontent.com/EmersonLopez2005/myreality/main/x.sh"
         chmod +x "$SCRIPT_PATH"
     fi
+    # 修复快捷键
     if ! grep -q "alias xray=" ~/.bashrc; then
         echo "alias xray='bash $SCRIPT_PATH'" >> ~/.bashrc
-        source ~/.bashrc
+        alias xray='bash $SCRIPT_PATH'
     fi
 }
 
@@ -37,35 +39,23 @@ update_script() {
     exit 0
 }
 
-# --- 强力卸载函数 ---
+# --- 强力卸载 ---
 uninstall_xray() {
     echo ""
     red "⚠️  警告：这将彻底删除 Xray 及其所有配置！"
     read -p "确定要卸载吗？(y/n): " confirm
     if [[ "$confirm" != "y" ]]; then echo "已取消"; return; fi
 
-    green "1. 停止服务..."
     systemctl stop xray >/dev/null 2>&1
     systemctl disable xray >/dev/null 2>&1
-    
-    green "2. 删除系统服务..."
     rm -f /etc/systemd/system/xray.service
-    rm -f /lib/systemd/system/xray.service
     systemctl daemon-reload
+    rm -rf /usr/local/bin/xray /usr/local/etc/xray /etc/xray /usr/local/share/xray /var/log/xray
     
-    green "3. 删除程序与配置 (强力模式)..."
-    rm -rf /usr/local/bin/xray
-    rm -rf /usr/local/etc/xray
-    rm -rf /etc/xray
-    rm -rf /usr/local/share/xray
-    rm -rf /var/log/xray
-    
-    green "4. 清理快捷键与脚本..."
     sed -i '/alias xray=/d' ~/.bashrc
     rm -f "$SCRIPT_PATH"
     
-    echo ""
-    green "✅ 卸载完成！系统已清理干净。"
+    green "✅ 卸载完成！"
     exit 0
 }
 
@@ -158,7 +148,7 @@ setup_system() {
     systemctl restart xray
 }
 
-# --- 核心：智能分流 (Gemini + ChatGPT) ---
+# --- 核心：智能分流 (修复 IPv6 泄露) ---
 setup_ai_routing_ss2022() {
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
     source "$ENV_FILE"
@@ -192,13 +182,12 @@ setup_ai_routing_ss2022() {
     read -p "选择 [1-2]: " m
     [[ "$m" == "2" ]] && us_method="2022-blake3-aes-256-gcm" || us_method="2022-blake3-aes-128-gcm"
 
-    green "正在写入路由规则..."
+    green "正在写入强力路由规则..."
     
-    # 策略解释：
-    # 1. YouTube -> 直连 (HK)。
-    # 2. Gemini/ChatGPT + UDP -> Block (防泄露)。
-    # 3. Gemini/ChatGPT + TCP -> US Proxy。
-    # 修复：移除 geosite:chatgpt/gemini/bard 等不稳定标签，改用 geosite:openai + 纯域名
+    # 策略解释 (核心修复):
+    # 1. [PRIORITY] YouTube -> 直连 (HK)。必须放在第一位！
+    # 2. [BLOCK]    UDP 443 -> 针对 Google/OpenAI 拦截。强制 TCP，防止 IPv6/QUIC 绕过。
+    # 3. [PROXY]    Google全家桶/OpenAI -> US Proxy。包含 geosite:google，确保账号验证不走 HK IPv6。
     
     cat > "$XRAY_CONF" <<JSON
 {
@@ -261,19 +250,16 @@ setup_ai_routing_ss2022() {
         "port": "443",
         "domain": [
           "geosite:openai",
+          "geosite:google",
           "geosite:bing",
           "domain:ai.com",
           "domain:openai.com",
           "domain:chatgpt.com",
-          "domain:oaistatic.com",
-          "domain:oaiusercontent.com",
-          "domain:accounts.google.com",
-          "domain:googleapis.com",
-          "domain:gstatic.com",
-          "domain:googleusercontent.com",
           "domain:gemini.google.com",
           "domain:bard.google.com",
-          "domain:makersuite.google.com"
+          "domain:accounts.google.com",
+          "domain:googleapis.com",
+          "domain:google.com"
         ]
       },
       {
@@ -281,19 +267,16 @@ setup_ai_routing_ss2022() {
         "outboundTag": "US_SS2022",
         "domain": [
           "geosite:openai",
+          "geosite:google",
           "geosite:bing",
           "domain:ai.com",
           "domain:openai.com",
           "domain:chatgpt.com",
-          "domain:oaistatic.com",
-          "domain:oaiusercontent.com",
-          "domain:accounts.google.com",
-          "domain:googleapis.com",
-          "domain:gstatic.com",
-          "domain:googleusercontent.com",
           "domain:gemini.google.com",
           "domain:bard.google.com",
-          "domain:makersuite.google.com"
+          "domain:accounts.google.com",
+          "domain:googleapis.com",
+          "domain:google.com"
         ]
       },
       {
@@ -308,11 +291,10 @@ JSON
     systemctl restart xray
     if systemctl is-active --quiet xray; then
         echo ""
-        green "✅ 智能分流配置成功！"
+        green "✅ 智能分流配置成功！(IPv6 泄露已修复)"
     else
         echo ""
         red "❌ 启动失败，请检查端口/密钥！"
-        red "提示: 请确保 US 节点信息正确，且加密方式匹配。"
     fi
 }
 
@@ -358,10 +340,9 @@ show_info() {
 menu() {
     clear
     install_jq
-    self_check
+    install_self
     get_ss_status
     
-    # 状态显示逻辑
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
         AI_STATUS="[\033[32m开启\033[0m]"
     else
@@ -369,7 +350,7 @@ menu() {
     fi
     
     echo "################################################"
-    echo "      Reality 管理面板"
+    echo "      Reality 管理面板 "
     echo "################################################"
     echo "1. 查看节点 (Info)"
     echo "2. 更新内核"
@@ -399,7 +380,7 @@ check_root=$( [[ $EUID -ne 0 ]] && echo "fail" )
 if [[ "$check_root" == "fail" ]]; then red "请用 root 运行"; exit 1; fi
 
 if [[ ! -f "$XRAY_CONF" ]]; then
-    self_check
+    install_self
     ask_config; install_core; generate_config; setup_system
     show_info
     exec bash -l
