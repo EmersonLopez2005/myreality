@@ -2,31 +2,45 @@
 set -u
 
 # ==================================================
-# Reality 管理脚本 (Gemini修复版 | YouTube不分流)
+# Reality 管理脚本
 # ==================================================
 
 # --- 全局变量 ---
 ENV_FILE="/etc/xray/reality.env"
 XRAY_CONF="/usr/local/etc/xray/config.json"
 XRAY_BIN="/usr/local/bin/xray"
-GEO_DIR="/usr/local/share/xray"
+SCRIPT_PATH="/root/x.sh"
 
-# --- 辅助颜色 ---
+# --- 颜色定义 ---
 red() { echo -e "\033[31m$1\033[0m"; }
 green() { echo -e "\033[32m$1\033[0m"; }
 yellow() { echo -e "\033[33m$1\033[0m"; }
 blue() { echo -e "\033[36m$1\033[0m"; }
-cyan() { echo -e "\033[36m$1\033[0m"; }
 
-check_root() { [[ $EUID -ne 0 ]] && red "请使用 root 权限运行" && exit 1; }
+# --- 自我更新机制 ---
+self_check() {
+    if [[ ! -f "$SCRIPT_PATH" ]] || [[ "${BASH_SOURCE[0]}" != "$SCRIPT_PATH" ]]; then
+        curl -o "$SCRIPT_PATH" -Ls "https://raw.githubusercontent.com/EmersonLopez2005/myreality/main/x.sh"
+        chmod +x "$SCRIPT_PATH"
+    fi
+    if ! grep -q "alias xray=" ~/.bashrc; then
+        echo "alias xray='bash $SCRIPT_PATH'" >> ~/.bashrc
+        source ~/.bashrc
+    fi
+}
 
-# --- 辅助函数：获取分流状态 ---
+update_script() {
+    green "正在从 GitHub 拉取最新脚本..."
+    curl -o "$SCRIPT_PATH" -Ls "https://raw.githubusercontent.com/EmersonLopez2005/myreality/main/x.sh"
+    chmod +x "$SCRIPT_PATH"
+    green "脚本已更新！请重新运行 xray"
+    exit 0
+}
+
+# --- 辅助函数 ---
 get_ss_status() {
     if [[ -f "$XRAY_CONF" ]]; then
-        # 尝试读取 SS2022 出站配置
         SS_IP=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].address' "$XRAY_CONF" 2>/dev/null)
-        SS_PORT=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].port' "$XRAY_CONF" 2>/dev/null)
-        SS_METHOD=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].method' "$XRAY_CONF" 2>/dev/null)
     else
         SS_IP=""
     fi
@@ -39,49 +53,32 @@ install_jq() {
     fi
 }
 
-# --- 1. 基础安装逻辑 ---
+# --- 1. 基础安装 ---
 ask_config() {
     clear
     echo "################################################"
-    echo "      Reality 极简安装脚本 "
+    echo "      Reality 极简安装脚本"
     echo "################################################"
     
-    read -p "$(yellow "请输入端口 [回车随机 10000-65535]: ") " input_port
-    if [[ -z "$input_port" ]]; then
-        PORT=$(shuf -i 10000-65535 -n 1)
-        blue "  -> 使用随机端口: $PORT"
-    else
-        PORT=$input_port
-        blue "  -> 使用自定义端口: $PORT"
-    fi
-    echo ""
+    read -p "$(yellow "请输入端口 [回车随机]: ") " input_port
+    [[ -z "$input_port" ]] && PORT=$(shuf -i 10000-65535 -n 1) || PORT=$input_port
 
-    read -p "$(yellow "请输入伪装域名 (SNI) [回车默认 learn.microsoft.com]: ") " input_sni
-    if [[ -z "$input_sni" ]]; then
-        TARGET_SNI="learn.microsoft.com"
-        blue "  -> 使用默认 SNI: $TARGET_SNI"
-    else
-        TARGET_SNI=$input_sni
-        blue "  -> 使用自定义 SNI: $TARGET_SNI"
-    fi
+    read -p "$(yellow "请输入伪装域名 [回车默认 learn.microsoft.com]: ") " input_sni
+    [[ -z "$input_sni" ]] && TARGET_SNI="learn.microsoft.com" || TARGET_SNI=$input_sni
+    
     echo ""
-
     green "配置确认：端口 $PORT | SNI $TARGET_SNI"
     read -p "按回车继续..."
 }
 
 install_core() {
-    green ">>> 安装/更新 Xray 内核..."
+    green ">>> 安装 Xray 内核..."
     bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 }
 
 generate_config() {
-    green ">>> 生成基础配置..."
     mkdir -p /etc/xray
-    
     UUID=$(cat /proc/sys/kernel/random/uuid)
-    if [[ ! -x "$XRAY_BIN" ]]; then red "未找到 Xray 内核"; exit 1; fi
-
     KEYS=$($XRAY_BIN x25519)
     PK=$(echo "$KEYS" | sed -n '1p' | awk -F: '{print $2}' | xargs)
     PUB=$(echo "$KEYS" | sed -n '2p' | awk -F: '{print $2}' | xargs)
@@ -114,7 +111,6 @@ generate_config() {
   "outbounds": [{ "protocol": "freedom", "tag": "direct" }]
 }
 JSON
-
     cat > "$ENV_FILE" <<ENV
 UUID=$UUID
 PORT=$PORT
@@ -126,73 +122,48 @@ ENV
 }
 
 setup_system() {
-    green ">>> 设置服务..."
-    if ! grep -q "alias xray=" ~/.bashrc; then
-        echo "alias xray='bash /root/x.sh'" >> ~/.bashrc
-        alias xray='bash /root/x.sh'
-    fi
     systemctl enable xray >/dev/null 2>&1
     systemctl restart xray
 }
 
-# --- 核心修改：分流逻辑 (Gemini去US，YouTube留HK) ---
+# --- 核心：智能分流 (Gemini + ChatGPT) ---
 setup_ai_routing_ss2022() {
-    if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置文件，请先安装节点"; return; fi
+    if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
     source "$ENV_FILE"
-
-    # 抢救 PrivateKey
+    
     CURRENT_PK=$(grep -oP '"privateKey": "\K[^"]+' "$XRAY_CONF")
-    if [[ -z "$CURRENT_PK" ]]; then
-        red "错误：无法读取 PrivateKey！请先执行选项 3 初始化配置。"
-        return
-    fi
+    if [[ -z "$CURRENT_PK" ]]; then red "私钥读取失败"; return; fi
 
     get_ss_status
-
     clear
     echo "################################################"
-    echo "       配置 Gemini 分流 (修复 a!=b 报错)"
+    echo "       配置分流 (Gemini + ChatGPT -> US)"
     echo "################################################"
-    echo "说明: Gemini/OpenAI/账号登录 -> 转发至 US"
-    echo "      YouTube/Google搜索     -> 保持 HK 直连 (速度优先)"
-    echo "------------------------------------------------"
     
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
-        green "⚠️  检测到当前已配置分流指向: $SS_IP"
-        read -p "是否要修改配置？(y/n) [默认 n]: " modify
-        if [[ "$modify" != "y" ]]; then
-            echo "已取消。"
-            return
-        fi
-        echo ""
+        green "当前 US 目标: $SS_IP"
+        read -p "是否修改? (y/n) [n]: " modify
+        [[ "$modify" != "y" ]] && return
     fi
     
-    read -p "$(yellow "1. US 节点 IP地址/域名: ") " us_addr
-    [[ -z "$us_addr" ]] && red "不能为空" && return
-
-    read -p "$(yellow "2. US 节点 端口: ") " us_port
-    [[ -z "$us_port" ]] && red "不能为空" && return
-
-    read -p "$(yellow "3. SS2022 密钥 (Password/Key): ") " us_pass
-    [[ -z "$us_pass" ]] && red "不能为空" && return
-
-    echo ""
-    echo "请选择加密方式 (Method):"
-    echo "1) 2022-blake3-aes-128-gcm (默认)"
-    echo "2) 2022-blake3-aes-256-gcm"
-    read -p "选择 [1-2, 默认1]: " method_select
+    read -p "$(yellow "1. US IP地址: ") " us_addr
+    [[ -z "$us_addr" ]] && return
+    read -p "$(yellow "2. US 端口: ") " us_port
+    [[ -z "$us_port" ]] && return
+    read -p "$(yellow "3. SS2022 密钥: ") " us_pass
+    [[ -z "$us_pass" ]] && return
     
-    case "$method_select" in
-        2) us_method="2022-blake3-aes-256-gcm" ;;
-        *) us_method="2022-blake3-aes-128-gcm" ;;
-    esac
-    blue "  -> 已选: $us_method"
-    echo ""
+    echo "加密: 1) aes-128-gcm (默认)"
+    read -p "选择: " m
+    [[ "$m" == "2" ]] && us_method="2022-blake3-aes-256-gcm" || us_method="2022-blake3-aes-128-gcm"
 
-    green "正在写入新配置 (已优化 YouTube 直连)..."
+    green "正在写入路由规则..."
     
-    # 写入带分流的配置
-    # 注意：rules 列表中不包含 youtube.com，确保视频走直连
+    # 策略解释：
+    # 1. YouTube -> 直连 (HK)。
+    # 2. Gemini/ChatGPT + UDP -> Block (防泄露)。
+    # 3. Gemini/ChatGPT + TCP -> US Proxy。
+    
     cat > "$XRAY_CONF" <<JSON
 {
   "log": { "loglevel": "warning" },
@@ -218,10 +189,7 @@ setup_ai_routing_ss2022() {
     }
   }],
   "outbounds": [
-    { 
-      "protocol": "freedom", 
-      "tag": "direct" 
-    },
+    { "protocol": "freedom", "tag": "direct" },
     {
       "tag": "US_SS2022",
       "protocol": "shadowsocks",
@@ -241,25 +209,57 @@ setup_ai_routing_ss2022() {
     "rules": [
       {
         "type": "field",
-        "outboundTag": "US_SS2022",
+        "outboundTag": "direct",
         "domain": [
+          "geosite:youtube",
+          "domain:googlevideo.com",
+          "domain:youtube.com",
+          "domain:ytimg.com",
+          "domain:ggpht.com"
+        ]
+      },
+      {
+        "type": "field",
+        "outboundTag": "block",
+        "network": "udp",
+        "port": "443",
+        "domain": [
+          "geosite:openai",
+          "geosite:chatgpt",
+          "geosite:gemini",
+          "geosite:bard",
+          "geosite:bing",
+          "domain:ai.com",
           "domain:openai.com",
           "domain:chatgpt.com",
-          "domain:ai.com",
+          "domain:accounts.google.com",
+          "domain:googleapis.com",
+          "domain:gstatic.com",
+          "domain:googleusercontent.com",
           "domain:gemini.google.com",
           "domain:bard.google.com",
-          "domain:makersuite.google.com",
-          "domain:alkalimakersuite-pa.clients6.google.com",
-          "domain:generativelanguage.googleapis.com",
-          "domain:proactivebackend-pa.googleapis.com",
+          "domain:makersuite.google.com"
+        ]
+      },
+      {
+        "type": "field",
+        "outboundTag": "US_SS2022",
+        "domain": [
+          "geosite:openai",
+          "geosite:chatgpt",
+          "geosite:gemini",
+          "geosite:bard",
+          "geosite:bing",
+          "domain:ai.com",
+          "domain:openai.com",
+          "domain:chatgpt.com",
           "domain:accounts.google.com",
-          "domain:myaccount.google.com",
           "domain:googleapis.com",
-          "domain:deepmind.com",
-          "domain:deepmind.google",
-          "domain:anthropic.com",
-          "domain:claude.ai",
-          "domain:bing.com"
+          "domain:gstatic.com",
+          "domain:googleusercontent.com",
+          "domain:gemini.google.com",
+          "domain:bard.google.com",
+          "domain:makersuite.google.com"
         ]
       },
       {
@@ -271,57 +271,36 @@ setup_ai_routing_ss2022() {
   }
 }
 JSON
-
-    green "重启服务..."
     systemctl restart xray
     if systemctl is-active --quiet xray; then
         echo ""
-        green "✅ 分流配置成功！"
-        echo "Gemini/GPT -> US ($us_addr)"
-        echo "YouTube    -> HK (直连)"
+        green "✅ 智能分流配置成功！"
     else
         echo ""
-        red "⚠️ 服务启动失败！"
-        red "请运行 '/usr/local/bin/xray run -test -c /usr/local/etc/xray/config.json' 查看详情"
+        red "❌ 启动失败，请检查端口/密钥！"
     fi
 }
 
 show_info() {
-    if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置文件"; return; fi
+    if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
     source "$ENV_FILE"
-    
     get_ss_status
     CURRENT_IP=$(curl -s -4 https://api.ipify.org)
     [[ -z "$CURRENT_IP" ]] && CURRENT_IP=$(curl -s https://api.ipify.org)
     
-    REMARK="$(hostname)"
-    LINK="vless://${UUID}@${CURRENT_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${PBK}&sid=${SID}&type=tcp#${REMARK}"
+    LINK="vless://${UUID}@${CURRENT_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${PBK}&sid=${SID}&type=tcp#$(hostname)"
     
     echo ""
-    green "=================================="
-    green "       节点配置信息 (VLESS)       "
-    green "=================================="
-    echo "地址 (Address):     ${CURRENT_IP}"
-    echo "端口 (Port):        ${PORT}"
-    echo "协议 (Protocol):    VLESS"
-    echo "用户ID (UUID):      ${UUID}"
-    echo "流控 (Flow):        xtls-rprx-vision"
-    echo "传输 (Network):     tcp"
-    echo "SNI (ServerName):   ${SNI}"
-    echo "公钥 (Public Key):  ${PBK}"
-    echo "ShortId:            ${SID}"
-    
-    echo "----------------------------------"
+    green "=== 节点信息 ==="
+    echo "地址: ${CURRENT_IP}"
+    echo "端口: ${PORT}"
+    echo "UUID: ${UUID}"
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
-        echo -e "分流状态 (Route):    \033[32m✅ 已启用\033[0m"
-        echo -e "Gemini/账号 (Target): $SS_IP (US)"
-        echo -e "YouTube (Target):     本地直连 (HK)"
+        green "分流: ✅ 开启 (Gemini/GPT -> US | YT -> HK)"
     else
-        echo -e "分流状态 (Route):    \033[31m❌ 未启用 (全部直连)\033[0m"
+        red "分流: ❌ 关闭"
     fi
-    echo "----------------------------------"
-    
-    yellow "👇 复制下方链接 (V2RayN / NekoBox / Shadowrocket):"
+    yellow "👇 链接:"
     echo "${LINK}"
     echo ""
 }
@@ -329,61 +308,43 @@ show_info() {
 menu() {
     clear
     install_jq
-    get_ss_status
-    if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
-        AI_STATUS="[\033[32m开启\033[0m]"
-    else
-        AI_STATUS="[\033[31m关闭\033[0m]"
-    fi
-
+    self_check
+    
     echo "################################################"
-    echo "      Reality 管理面板 (修复版)"
-    echo "      Xray 版本: $($XRAY_BIN version | head -n 1 | awk '{print $2}')"
+    echo "      Reality 管理面板"
     echo "################################################"
-    echo "1. 查看节点配置 (Info)"
-    echo "2. 更新/安装 内核 (Update Core)"
-    echo "3. 修改端口/重置 (Re-Install)"
-    echo "4. 重启服务 (Restart)"
-    echo "5. 卸载脚本 (Uninstall)"
-    echo "------------------------------------------------"
-    echo -e "6. 配置 Gemini 分流 $AI_STATUS"
-    echo "------------------------------------------------"
+    echo "1. 查看节点 (Info)"
+    echo "2. 更新内核"
+    echo "3. 初始化/重置 (Re-Install)"
+    echo "4. 重启服务"
+    echo "5. 卸载脚本"
+    echo "--------------------------------"
+    echo "6. 配置分流 (Gemini+GPT -> US)"
+    echo "7. 更新脚本 (Update Script)"
+    echo "--------------------------------"
     echo "0. 退出"
-    echo "################################################"
-    read -p "请选择: " num
+    read -p "选择: " num
     case "$num" in
         1) show_info ;;
-        2) install_core; systemctl restart xray; green "内核已更新" ;;
-        3) ask_config; generate_config; systemctl restart xray; show_info ;;
-        4) systemctl restart xray; green "服务已重启" ;;
-        5) 
-            systemctl stop xray
-            rm -rf /usr/local/bin/xray /usr/local/etc/xray /etc/xray /root/x.sh
-            sed -i '/alias xray=/d' ~/.bashrc
-            green "已卸载" 
-            ;;
+        2) install_core; systemctl restart xray ;;
+        3) ask_config; install_core; generate_config; setup_system; show_info ;;
+        4) systemctl restart xray; green "已重启" ;;
+        5) systemctl stop xray; rm -f /root/x.sh; green "已卸载";;
         6) setup_ai_routing_ss2022 ;;
+        7) update_script ;;
         0) exit 0 ;;
         *) red "无效选项" ;;
     esac
 }
 
-# --- 入口 ---
-check_root
+check_root=$( [[ $EUID -ne 0 ]] && echo "fail" )
+if [[ "$check_root" == "fail" ]]; then red "请用 root 运行"; exit 1; fi
+
 if [[ ! -f "$XRAY_CONF" ]]; then
-    # 第一次运行，自动修复 alias 并进入安装
-    if ! grep -q "alias xray=" ~/.bashrc; then
-        echo "alias xray='bash /root/x.sh'" >> ~/.bashrc
-    fi
+    self_check
     ask_config; install_core; generate_config; setup_system
-    green ">>> 安装完成！输入 'xray' 调出菜单。"
     show_info
     exec bash -l
 else
-    # 修复 alias 防止命令丢失
-    if ! grep -q "alias xray=" ~/.bashrc; then
-        echo "alias xray='bash /root/x.sh'" >> ~/.bashrc
-    fi
-    alias xray='bash /root/x.sh'
     menu
 fi
