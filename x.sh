@@ -37,7 +37,7 @@ update_script() {
     exit 0
 }
 
-# --- 强力卸载函数 (修复删不干净的问题) ---
+# --- 强力卸载函数 ---
 uninstall_xray() {
     echo ""
     red "⚠️  警告：这将彻底删除 Xray 及其所有配置！"
@@ -54,7 +54,6 @@ uninstall_xray() {
     systemctl daemon-reload
     
     green "3. 删除程序与配置 (强力模式)..."
-    # 硬编码路径，防止变量为空导致误删或漏删
     rm -rf /usr/local/bin/xray
     rm -rf /usr/local/etc/xray
     rm -rf /etc/xray
@@ -66,8 +65,7 @@ uninstall_xray() {
     rm -f "$SCRIPT_PATH"
     
     echo ""
-    green "✅ 卸载完成！所有相关文件已清除。"
-    green "现在你的系统是干干净净的了。"
+    green "✅ 卸载完成！系统已清理干净。"
     exit 0
 }
 
@@ -160,7 +158,7 @@ setup_system() {
     systemctl restart xray
 }
 
-# --- 核心：智能分流 ---
+# --- 核心：智能分流 (Gemini + ChatGPT) ---
 setup_ai_routing_ss2022() {
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
     source "$ENV_FILE"
@@ -187,8 +185,11 @@ setup_ai_routing_ss2022() {
     read -p "$(yellow "3. SS2022 密钥: ") " us_pass
     [[ -z "$us_pass" ]] && return
     
-    echo "加密: 1) aes-128-gcm (默认)"
-    read -p "选择: " m
+    echo ""
+    echo "请选择 SS2022 加密方式:"
+    echo "1) 2022-blake3-aes-128-gcm (推荐/默认)"
+    echo "2) 2022-blake3-aes-256-gcm"
+    read -p "选择 [1-2]: " m
     [[ "$m" == "2" ]] && us_method="2022-blake3-aes-256-gcm" || us_method="2022-blake3-aes-128-gcm"
 
     green "正在写入路由规则..."
@@ -337,8 +338,8 @@ show_info() {
     echo "----------------------------------"
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
         echo -e "分流状态 (Route):    \033[32m✅ 已启用\033[0m"
-        echo -e "Gemini/GPT (Target): $SS_IP"
-        echo -e "YouTube (Target):    本地直连"
+        echo -e "Gemini/GPT (Target): $SS_IP (US)"
+        echo -e "YouTube (Target):    本地直连 (HK)"
     else
         echo -e "分流状态 (Route):    \033[31m❌ 未启用 (全部直连)\033[0m"
     fi
@@ -353,6 +354,14 @@ menu() {
     clear
     install_jq
     self_check
+    get_ss_status
+    
+    # 状态显示逻辑
+    if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
+        AI_STATUS="[\033[32m开启\033[0m]"
+    else
+        AI_STATUS="[\033[31m关闭\033[0m]"
+    fi
     
     echo "################################################"
     echo "      Reality 管理面板"
@@ -363,7 +372,7 @@ menu() {
     echo "4. 重启服务"
     echo "5. 彻底卸载 (Uninstall & Clean)"
     echo "--------------------------------"
-    echo "6. 配置分流 (Gemini+GPT -> US)"
+    echo -e "6. 配置分流 (Gemini+GPT -> US) $AI_STATUS"
     echo "7. 更新脚本 (Update Script)"
     echo "--------------------------------"
     echo "0. 退出"
