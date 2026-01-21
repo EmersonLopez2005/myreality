@@ -16,8 +16,21 @@ red() { echo -e "\033[31m$1\033[0m"; }
 green() { echo -e "\033[32m$1\033[0m"; }
 yellow() { echo -e "\033[33m$1\033[0m"; }
 blue() { echo -e "\033[36m$1\033[0m"; }
+cyan() { echo -e "\033[36m$1\033[0m"; }
 
 check_root() { [[ $EUID -ne 0 ]] && red "请使用 root 权限运行" && exit 1; }
+
+# --- 辅助函数：获取分流状态 ---
+get_ss_status() {
+    # 使用 jq 从配置文件中提取 SS2022 的出站信息
+    if [[ -f "$XRAY_CONF" ]]; then
+        SS_IP=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].address' "$XRAY_CONF" 2>/dev/null)
+        SS_PORT=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].port' "$XRAY_CONF" 2>/dev/null)
+        SS_METHOD=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].method' "$XRAY_CONF" 2>/dev/null)
+    else
+        SS_IP=""
+    fi
+}
 
 # --- 1. 基础安装逻辑 ---
 ask_config() {
@@ -126,21 +139,41 @@ setup_ai_routing_ss2022() {
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置文件，请先安装节点"; return; fi
     source "$ENV_FILE"
 
-    # 1. 抢救 PrivateKey (非常重要)
+    # 抢救 PrivateKey
     CURRENT_PK=$(grep -oP '"privateKey": "\K[^"]+' "$XRAY_CONF")
     if [[ -z "$CURRENT_PK" ]]; then
-        red "错误：无法从现配置中读取 PrivateKey！操作中止。"
+        red "错误：无法读取 PrivateKey！请先重新安装 (选项3)。"
         return
     fi
+
+    # 获取当前状态
+    get_ss_status
 
     clear
     echo "################################################"
     echo "       配置 SS2022 前置分流 (Gemini -> US)"
     echo "################################################"
-    echo "请准备好你的 US 节点 SS2022 信息。"
-    echo ""
     
-    # 2. 收集 SS2022 信息
+    if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
+        green "⚠️  检测到当前已配置分流："
+        echo "   目标 IP  : $SS_IP"
+        echo "   目标端口 : $SS_PORT"
+        echo "   加密方式 : $SS_METHOD"
+        echo ""
+        read -p "是否要修改配置？(y/n) [默认 n]: " modify
+        if [[ "$modify" != "y" ]]; then
+            echo "已取消。"
+            return
+        fi
+        echo ""
+    else
+        echo "当前状态：❌ 未配置"
+        echo ""
+    fi
+    
+    echo "请准备好你的 US 节点 SS2022 信息。"
+    echo "----------------------------------------"
+    
     read -p "$(yellow "1. US 节点 IP地址/域名: ") " us_addr
     [[ -z "$us_addr" ]] && red "不能为空" && return
 
@@ -163,13 +196,13 @@ setup_ai_routing_ss2022() {
     blue "  -> 已选: $us_method"
     echo ""
 
-    green "正在下载 Geosite 规则库..."
+    green "正在更新 Geosite 规则库..."
     mkdir -p "$GEO_DIR"
-    curl -L -o "$GEO_DIR/geosite.dat" "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat"
+    curl -L -o "$GEO_DIR/geosite.dat" "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat" >/dev/null 2>&1
 
-    green "正在写入分流配置..."
+    green "正在写入新配置..."
     
-    # 3. 写入带 SS2022 出站的配置
+    # 写入带 SS2022 出站的配置
     cat > "$XRAY_CONF" <<JSON
 {
   "log": { "loglevel": "warning" },
@@ -241,18 +274,19 @@ JSON
     green "重启服务..."
     systemctl restart xray
     echo ""
-    green "✅ 分流已配置！"
-    echo "现在访问 Gemini/GPT 将自动转发至 -> $us_addr ($us_method)"
+    green "✅ 分流配置更新成功！"
+    echo "Gemini/GPT 流量 -> $us_addr"
 }
 
-# --- 恢复原版详细信息显示 ---
 show_info() {
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置文件"; return; fi
     source "$ENV_FILE"
-    CURRENT_IP=$(curl -s https://api.ipify.org)
-    HOST_NAME=$(hostname)
     
-    REMARK="${HOST_NAME}"
+    # 每次查看信息时，重新获取分流状态
+    get_ss_status
+    
+    CURRENT_IP=$(curl -s https://api.ipify.org)
+    REMARK="$(hostname)"
     LINK="vless://${UUID}@${CURRENT_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${PBK}&sid=${SID}&type=tcp#${REMARK}"
     
     echo ""
@@ -266,10 +300,18 @@ show_info() {
     echo "流控 (Flow):        xtls-rprx-vision"
     echo "传输 (Network):     tcp"
     echo "SNI (ServerName):   ${SNI}"
-    echo "指纹 (Fingerprint): chrome"
     echo "公钥 (Public Key):  ${PBK}"
     echo "ShortId:            ${SID}"
-    echo ""
+    
+    echo "----------------------------------"
+    if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
+        echo -e "分流状态 (AI Route): \033[32m✅ 已启用\033[0m"
+        echo -e "分流目标 (Target):   ${SS_IP}:${SS_PORT} (${SS_METHOD})"
+    else
+        echo -e "分流状态 (AI Route): \033[31m❌ 未启用 (默认直连)\033[0m"
+    fi
+    echo "----------------------------------"
+    
     yellow "👇 复制下方链接 (V2RayN / NekoBox / Shadowrocket):"
     echo "${LINK}"
     echo ""
@@ -277,6 +319,14 @@ show_info() {
 
 menu() {
     clear
+    # 菜单里也显示简单的状态
+    get_ss_status
+    if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
+        AI_STATUS="[\033[32m开启\033[0m]"
+    else
+        AI_STATUS="[\033[31m关闭\033[0m]"
+    fi
+
     echo "################################################"
     echo "      极简 Reality 管理面板"
     echo "      Xray 版本: $($XRAY_BIN version | head -n 1 | awk '{print $2}')"
@@ -287,7 +337,7 @@ menu() {
     echo "4. 重启服务 (Restart)"
     echo "5. 卸载脚本 (Uninstall)"
     echo "------------------------------------------------"
-    echo "6. 配置 AI 分流 (Gemini -> US SS2022) 🔥"
+    echo -e "6. 配置 AI 分流 (Gemini -> US) $AI_STATUS"
     echo "------------------------------------------------"
     echo "0. 退出"
     echo "################################################"
