@@ -16,13 +16,11 @@ red() { echo -e "\033[31m$1\033[0m"; }
 green() { echo -e "\033[32m$1\033[0m"; }
 yellow() { echo -e "\033[33m$1\033[0m"; }
 blue() { echo -e "\033[36m$1\033[0m"; }
-cyan() { echo -e "\033[36m$1\033[0m"; }
 
 check_root() { [[ $EUID -ne 0 ]] && red "请使用 root 权限运行" && exit 1; }
 
 # --- 辅助函数：获取分流状态 ---
 get_ss_status() {
-    # 使用 jq 从配置文件中提取 SS2022 的出站信息
     if [[ -f "$XRAY_CONF" ]]; then
         SS_IP=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].address' "$XRAY_CONF" 2>/dev/null)
         SS_PORT=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].port' "$XRAY_CONF" 2>/dev/null)
@@ -134,19 +132,17 @@ setup_system() {
     systemctl restart xray
 }
 
-# --- 核心修改：SS2022 分流逻辑 ---
+# --- 核心修改：SS2022 分流逻辑 (修复版) ---
 setup_ai_routing_ss2022() {
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置文件，请先安装节点"; return; fi
     source "$ENV_FILE"
 
-    # 抢救 PrivateKey
     CURRENT_PK=$(grep -oP '"privateKey": "\K[^"]+' "$XRAY_CONF")
     if [[ -z "$CURRENT_PK" ]]; then
-        red "错误：无法读取 PrivateKey！请先重新安装 (选项3)。"
+        red "错误：无法读取 PrivateKey！请先执行选项 3 重新安装。"
         return
     fi
 
-    # 获取当前状态
     get_ss_status
 
     clear
@@ -172,7 +168,6 @@ setup_ai_routing_ss2022() {
     fi
     
     echo "请准备好你的 US 节点 SS2022 信息。"
-    echo "----------------------------------------"
     
     read -p "$(yellow "1. US 节点 IP地址/域名: ") " us_addr
     [[ -z "$us_addr" ]] && red "不能为空" && return
@@ -196,13 +191,10 @@ setup_ai_routing_ss2022() {
     blue "  -> 已选: $us_method"
     echo ""
 
-    green "正在更新 Geosite 规则库..."
-    mkdir -p "$GEO_DIR"
-    curl -L -o "$GEO_DIR/geosite.dat" "https://github.com/v2fly/domain-list-community/releases/latest/download/dlc.dat" >/dev/null 2>&1
-
-    green "正在写入新配置..."
+    green "正在写入新配置 (使用内置域名列表，无需下载 geosite)..."
     
     # 写入带 SS2022 出站的配置
+    # 注意：这里不再使用 geosite:gemini，而是直接写域名，防止报错
     cat > "$XRAY_CONF" <<JSON
 {
   "log": { "loglevel": "warning" },
@@ -253,12 +245,21 @@ setup_ai_routing_ss2022() {
         "type": "field",
         "outboundTag": "US_SS2022",
         "domain": [
-          "geosite:openai",
-          "geosite:gemini",
-          "geosite:bard",
-          "geosite:anthropic",
-          "geosite:bing",
-          "domain:alkalimakersuite-pa.clients6.google.com"
+          "domain:openai.com",
+          "domain:chatgpt.com",
+          "domain:ai.com",
+          "domain:gemini.google.com",
+          "domain:bard.google.com",
+          "domain:makersuite.google.com",
+          "domain:alkalimakersuite-pa.clients6.google.com",
+          "domain:generativelanguage.googleapis.com",
+          "domain:proactivebackend-pa.googleapis.com",
+          "domain:deepmind.com",
+          "domain:deepmind.google",
+          "domain:anthropic.com",
+          "domain:claude.ai",
+          "domain:bing.com",
+          "domain:bing.net"
         ]
       },
       {
@@ -273,18 +274,22 @@ JSON
 
     green "重启服务..."
     systemctl restart xray
-    echo ""
-    green "✅ 分流配置更新成功！"
-    echo "Gemini/GPT 流量 -> $us_addr"
+    if systemctl is-active --quiet xray; then
+        echo ""
+        green "✅ 分流配置更新成功！已修复 list not found 错误。"
+        echo "Gemini/GPT 流量 -> $us_addr"
+    else
+        echo ""
+        red "⚠️ 配置更新后服务启动失败！"
+        red "请运行 '/usr/local/bin/xray run -test -c /usr/local/etc/xray/config.json' 查看详情"
+    fi
 }
 
 show_info() {
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置文件"; return; fi
     source "$ENV_FILE"
     
-    # 每次查看信息时，重新获取分流状态
     get_ss_status
-    
     CURRENT_IP=$(curl -s https://api.ipify.org)
     REMARK="$(hostname)"
     LINK="vless://${UUID}@${CURRENT_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${PBK}&sid=${SID}&type=tcp#${REMARK}"
@@ -319,7 +324,6 @@ show_info() {
 
 menu() {
     clear
-    # 菜单里也显示简单的状态
     get_ss_status
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
         AI_STATUS="[\033[32m开启\033[0m]"
