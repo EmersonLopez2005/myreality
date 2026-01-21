@@ -19,12 +19,10 @@ blue() { echo -e "\033[36m$1\033[0m"; }
 
 # --- 自我更新机制 ---
 self_check() {
-    # 确保本地有脚本文件
     if [[ ! -f "$SCRIPT_PATH" ]] || [[ "${BASH_SOURCE[0]}" != "$SCRIPT_PATH" ]]; then
         curl -o "$SCRIPT_PATH" -Ls "https://raw.githubusercontent.com/EmersonLopez2005/myreality/main/x.sh"
         chmod +x "$SCRIPT_PATH"
     fi
-    # 确保快捷键存在
     if ! grep -q "alias xray=" ~/.bashrc; then
         echo "alias xray='bash $SCRIPT_PATH'" >> ~/.bashrc
         source ~/.bashrc
@@ -36,6 +34,40 @@ update_script() {
     curl -o "$SCRIPT_PATH" -Ls "https://raw.githubusercontent.com/EmersonLopez2005/myreality/main/x.sh"
     chmod +x "$SCRIPT_PATH"
     green "脚本已更新！请重新运行 xray"
+    exit 0
+}
+
+# --- 强力卸载函数 (修复删不干净的问题) ---
+uninstall_xray() {
+    echo ""
+    red "⚠️  警告：这将彻底删除 Xray 及其所有配置！"
+    read -p "确定要卸载吗？(y/n): " confirm
+    if [[ "$confirm" != "y" ]]; then echo "已取消"; return; fi
+
+    green "1. 停止服务..."
+    systemctl stop xray >/dev/null 2>&1
+    systemctl disable xray >/dev/null 2>&1
+    
+    green "2. 删除系统服务..."
+    rm -f /etc/systemd/system/xray.service
+    rm -f /lib/systemd/system/xray.service
+    systemctl daemon-reload
+    
+    green "3. 删除程序与配置 (强力模式)..."
+    # 硬编码路径，防止变量为空导致误删或漏删
+    rm -rf /usr/local/bin/xray
+    rm -rf /usr/local/etc/xray
+    rm -rf /etc/xray
+    rm -rf /usr/local/share/xray
+    rm -rf /var/log/xray
+    
+    green "4. 清理快捷键与脚本..."
+    sed -i '/alias xray=/d' ~/.bashrc
+    rm -f "$SCRIPT_PATH"
+    
+    echo ""
+    green "✅ 卸载完成！所有相关文件已清除。"
+    green "现在你的系统是干干净净的了。"
     exit 0
 }
 
@@ -82,7 +114,6 @@ generate_config() {
     mkdir -p /etc/xray
     UUID=$(cat /proc/sys/kernel/random/uuid)
     KEYS=$($XRAY_BIN x25519)
-    # 提取 Reality 必须的 key
     PK=$(echo "$KEYS" | sed -n '1p' | awk -F: '{print $2}' | xargs)
     PUB=$(echo "$KEYS" | sed -n '2p' | awk -F: '{print $2}' | xargs)
     SHORT_ID=$(openssl rand -hex 4)
@@ -129,7 +160,7 @@ setup_system() {
     systemctl restart xray
 }
 
-# --- 核心：智能分流 (Gemini + ChatGPT + YouTube直连) ---
+# --- 核心：智能分流 ---
 setup_ai_routing_ss2022() {
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
     source "$ENV_FILE"
@@ -140,7 +171,7 @@ setup_ai_routing_ss2022() {
     get_ss_status
     clear
     echo "################################################"
-    echo "       配置分流 (Gemini + ChatGPT -> US)"
+    echo "       配置分流 "
     echo "################################################"
     
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
@@ -161,11 +192,6 @@ setup_ai_routing_ss2022() {
     [[ "$m" == "2" ]] && us_method="2022-blake3-aes-256-gcm" || us_method="2022-blake3-aes-128-gcm"
 
     green "正在写入路由规则..."
-    
-    # 策略解释：
-    # 1. YouTube -> 直连 (HK) [允许UDP]
-    # 2. Gemini/ChatGPT + UDP -> Block [防泄露]
-    # 3. Gemini/ChatGPT + TCP -> US Proxy
     
     cat > "$XRAY_CONF" <<JSON
 {
@@ -288,13 +314,10 @@ show_info() {
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
     source "$ENV_FILE"
     get_ss_status
-    
-    # 优先获取IPv4
     CURRENT_IP=$(curl -s -4 https://api.ipify.org)
     [[ -z "$CURRENT_IP" ]] && CURRENT_IP=$(curl -s https://api.ipify.org)
     REMARK="$(hostname)"
     
-    # 完整的 Reality 链接
     LINK="vless://${UUID}@${CURRENT_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${PBK}&sid=${SID}&type=tcp#${REMARK}"
     
     echo ""
@@ -314,7 +337,7 @@ show_info() {
     echo "----------------------------------"
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
         echo -e "分流状态 (Route):    \033[32m✅ 已启用\033[0m"
-        echo -e "Gemini/GPT (Target): $SS_IP "
+        echo -e "Gemini/GPT (Target): $SS_IP"
         echo -e "YouTube (Target):    本地直连"
     else
         echo -e "分流状态 (Route):    \033[31m❌ 未启用 (全部直连)\033[0m"
@@ -338,7 +361,7 @@ menu() {
     echo "2. 更新内核"
     echo "3. 初始化/重置 (Re-Install)"
     echo "4. 重启服务"
-    echo "5. 卸载脚本"
+    echo "5. 彻底卸载 (Uninstall & Clean)"
     echo "--------------------------------"
     echo "6. 配置分流 (Gemini+GPT -> US)"
     echo "7. 更新脚本 (Update Script)"
@@ -350,7 +373,7 @@ menu() {
         2) install_core; systemctl restart xray ;;
         3) ask_config; install_core; generate_config; setup_system; show_info ;;
         4) systemctl restart xray; green "已重启" ;;
-        5) systemctl stop xray; rm -f /root/x.sh; green "已卸载";;
+        5) uninstall_xray ;;
         6) setup_ai_routing_ss2022 ;;
         7) update_script ;;
         0) exit 0 ;;
