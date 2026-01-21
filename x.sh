@@ -169,7 +169,7 @@ setup_ai_routing_ss2022() {
     get_ss_status
     clear
     echo "################################################"
-    echo "       配置分流 "
+    echo "       配置分流 (Gemini + ChatGPT -> US)"
     echo "################################################"
     
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
@@ -193,6 +193,12 @@ setup_ai_routing_ss2022() {
     [[ "$m" == "2" ]] && us_method="2022-blake3-aes-256-gcm" || us_method="2022-blake3-aes-128-gcm"
 
     green "正在写入路由规则..."
+    
+    # 策略解释：
+    # 1. YouTube -> 直连 (HK)。
+    # 2. Gemini/ChatGPT + UDP -> Block (防泄露)。
+    # 3. Gemini/ChatGPT + TCP -> US Proxy。
+    # 修复：移除 geosite:chatgpt/gemini/bard 等不稳定标签，改用 geosite:openai + 纯域名
     
     cat > "$XRAY_CONF" <<JSON
 {
@@ -255,13 +261,12 @@ setup_ai_routing_ss2022() {
         "port": "443",
         "domain": [
           "geosite:openai",
-          "geosite:chatgpt",
-          "geosite:gemini",
-          "geosite:bard",
           "geosite:bing",
           "domain:ai.com",
           "domain:openai.com",
           "domain:chatgpt.com",
+          "domain:oaistatic.com",
+          "domain:oaiusercontent.com",
           "domain:accounts.google.com",
           "domain:googleapis.com",
           "domain:gstatic.com",
@@ -276,13 +281,12 @@ setup_ai_routing_ss2022() {
         "outboundTag": "US_SS2022",
         "domain": [
           "geosite:openai",
-          "geosite:chatgpt",
-          "geosite:gemini",
-          "geosite:bard",
           "geosite:bing",
           "domain:ai.com",
           "domain:openai.com",
           "domain:chatgpt.com",
+          "domain:oaistatic.com",
+          "domain:oaiusercontent.com",
           "domain:accounts.google.com",
           "domain:googleapis.com",
           "domain:gstatic.com",
@@ -308,6 +312,7 @@ JSON
     else
         echo ""
         red "❌ 启动失败，请检查端口/密钥！"
+        red "提示: 请确保 US 节点信息正确，且加密方式匹配。"
     fi
 }
 
@@ -338,8 +343,8 @@ show_info() {
     echo "----------------------------------"
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
         echo -e "分流状态 (Route):    \033[32m✅ 已启用\033[0m"
-        echo -e "Gemini/GPT (Target): $SS_IP (US)"
-        echo -e "YouTube (Target):    本地直连 (HK)"
+        echo -e "Gemini/GPT (Target): $SS_IP"
+        echo -e "YouTube (Target):    本地直连"
     else
         echo -e "分流状态 (Route):    \033[31m❌ 未启用 (全部直连)\033[0m"
     fi
