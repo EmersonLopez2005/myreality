@@ -2,7 +2,7 @@
 set -u
 
 # ==================================================
-# 极简 Reality 管理脚本
+# Reality 管理脚本 (Gemini修复版 | YouTube不分流)
 # ==================================================
 
 # --- 全局变量 ---
@@ -16,17 +16,26 @@ red() { echo -e "\033[31m$1\033[0m"; }
 green() { echo -e "\033[32m$1\033[0m"; }
 yellow() { echo -e "\033[33m$1\033[0m"; }
 blue() { echo -e "\033[36m$1\033[0m"; }
+cyan() { echo -e "\033[36m$1\033[0m"; }
 
 check_root() { [[ $EUID -ne 0 ]] && red "请使用 root 权限运行" && exit 1; }
 
 # --- 辅助函数：获取分流状态 ---
 get_ss_status() {
     if [[ -f "$XRAY_CONF" ]]; then
+        # 尝试读取 SS2022 出站配置
         SS_IP=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].address' "$XRAY_CONF" 2>/dev/null)
         SS_PORT=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].port' "$XRAY_CONF" 2>/dev/null)
         SS_METHOD=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].method' "$XRAY_CONF" 2>/dev/null)
     else
         SS_IP=""
+    fi
+}
+
+install_jq() {
+    if ! command -v jq &> /dev/null; then
+        apt-get update -y >/dev/null 2>&1
+        apt-get install -y jq >/dev/null 2>&1
     fi
 }
 
@@ -61,14 +70,8 @@ ask_config() {
     read -p "按回车继续..."
 }
 
-install_deps() {
-    green ">>> 安装依赖..."
-    apt-get update -y >/dev/null 2>&1
-    apt-get install -y curl unzip openssl jq >/dev/null 2>&1
-}
-
 install_core() {
-    green ">>> 安装 Xray 内核..."
+    green ">>> 安装/更新 Xray 内核..."
     bash -c "$(curl -L https://github.com/XTLS/Xray-install/raw/main/install-release.sh)" @ install
 }
 
@@ -132,14 +135,15 @@ setup_system() {
     systemctl restart xray
 }
 
-# --- 核心修改：SS2022 分流逻辑 (修复版) ---
+# --- 核心修改：分流逻辑 (Gemini去US，YouTube留HK) ---
 setup_ai_routing_ss2022() {
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置文件，请先安装节点"; return; fi
     source "$ENV_FILE"
 
+    # 抢救 PrivateKey
     CURRENT_PK=$(grep -oP '"privateKey": "\K[^"]+' "$XRAY_CONF")
     if [[ -z "$CURRENT_PK" ]]; then
-        red "错误：无法读取 PrivateKey！请先执行选项 3 重新安装。"
+        red "错误：无法读取 PrivateKey！请先执行选项 3 初始化配置。"
         return
     fi
 
@@ -147,27 +151,21 @@ setup_ai_routing_ss2022() {
 
     clear
     echo "################################################"
-    echo "       配置 SS2022 前置分流 (Gemini -> US)"
+    echo "       配置 Gemini 分流 (修复 a!=b 报错)"
     echo "################################################"
+    echo "说明: Gemini/OpenAI/账号登录 -> 转发至 US"
+    echo "      YouTube/Google搜索     -> 保持 HK 直连 (速度优先)"
+    echo "------------------------------------------------"
     
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
-        green "⚠️  检测到当前已配置分流："
-        echo "   目标 IP  : $SS_IP"
-        echo "   目标端口 : $SS_PORT"
-        echo "   加密方式 : $SS_METHOD"
-        echo ""
+        green "⚠️  检测到当前已配置分流指向: $SS_IP"
         read -p "是否要修改配置？(y/n) [默认 n]: " modify
         if [[ "$modify" != "y" ]]; then
             echo "已取消。"
             return
         fi
         echo ""
-    else
-        echo "当前状态：❌ 未配置"
-        echo ""
     fi
-    
-    echo "请准备好你的 US 节点 SS2022 信息。"
     
     read -p "$(yellow "1. US 节点 IP地址/域名: ") " us_addr
     [[ -z "$us_addr" ]] && red "不能为空" && return
@@ -180,7 +178,7 @@ setup_ai_routing_ss2022() {
 
     echo ""
     echo "请选择加密方式 (Method):"
-    echo "1) 2022-blake3-aes-128-gcm (推荐)"
+    echo "1) 2022-blake3-aes-128-gcm (默认)"
     echo "2) 2022-blake3-aes-256-gcm"
     read -p "选择 [1-2, 默认1]: " method_select
     
@@ -191,10 +189,10 @@ setup_ai_routing_ss2022() {
     blue "  -> 已选: $us_method"
     echo ""
 
-    green "正在写入新配置 (使用内置域名列表，无需下载 geosite)..."
+    green "正在写入新配置 (已优化 YouTube 直连)..."
     
-    # 写入带 SS2022 出站的配置
-    # 注意：这里不再使用 geosite:gemini，而是直接写域名，防止报错
+    # 写入带分流的配置
+    # 注意：rules 列表中不包含 youtube.com，确保视频走直连
     cat > "$XRAY_CONF" <<JSON
 {
   "log": { "loglevel": "warning" },
@@ -254,12 +252,14 @@ setup_ai_routing_ss2022() {
           "domain:alkalimakersuite-pa.clients6.google.com",
           "domain:generativelanguage.googleapis.com",
           "domain:proactivebackend-pa.googleapis.com",
+          "domain:accounts.google.com",
+          "domain:myaccount.google.com",
+          "domain:googleapis.com",
           "domain:deepmind.com",
           "domain:deepmind.google",
           "domain:anthropic.com",
           "domain:claude.ai",
-          "domain:bing.com",
-          "domain:bing.net"
+          "domain:bing.com"
         ]
       },
       {
@@ -276,11 +276,12 @@ JSON
     systemctl restart xray
     if systemctl is-active --quiet xray; then
         echo ""
-        green "✅ 分流配置更新成功！已修复 list not found 错误。"
-        echo "Gemini/GPT 流量 -> $us_addr"
+        green "✅ 分流配置成功！"
+        echo "Gemini/GPT -> US ($us_addr)"
+        echo "YouTube    -> HK (直连)"
     else
         echo ""
-        red "⚠️ 配置更新后服务启动失败！"
+        red "⚠️ 服务启动失败！"
         red "请运行 '/usr/local/bin/xray run -test -c /usr/local/etc/xray/config.json' 查看详情"
     fi
 }
@@ -290,7 +291,9 @@ show_info() {
     source "$ENV_FILE"
     
     get_ss_status
-    CURRENT_IP=$(curl -s https://api.ipify.org)
+    CURRENT_IP=$(curl -s -4 https://api.ipify.org)
+    [[ -z "$CURRENT_IP" ]] && CURRENT_IP=$(curl -s https://api.ipify.org)
+    
     REMARK="$(hostname)"
     LINK="vless://${UUID}@${CURRENT_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${PBK}&sid=${SID}&type=tcp#${REMARK}"
     
@@ -310,10 +313,11 @@ show_info() {
     
     echo "----------------------------------"
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
-        echo -e "分流状态 (AI Route): \033[32m✅ 已启用\033[0m"
-        echo -e "分流目标 (Target):   ${SS_IP}:${SS_PORT} (${SS_METHOD})"
+        echo -e "分流状态 (Route):    \033[32m✅ 已启用\033[0m"
+        echo -e "Gemini/账号 (Target): $SS_IP (US)"
+        echo -e "YouTube (Target):     本地直连 (HK)"
     else
-        echo -e "分流状态 (AI Route): \033[31m❌ 未启用 (默认直连)\033[0m"
+        echo -e "分流状态 (Route):    \033[31m❌ 未启用 (全部直连)\033[0m"
     fi
     echo "----------------------------------"
     
@@ -324,6 +328,7 @@ show_info() {
 
 menu() {
     clear
+    install_jq
     get_ss_status
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
         AI_STATUS="[\033[32m开启\033[0m]"
@@ -332,16 +337,16 @@ menu() {
     fi
 
     echo "################################################"
-    echo "      极简 Reality 管理面板"
+    echo "      Reality 管理面板 (修复版)"
     echo "      Xray 版本: $($XRAY_BIN version | head -n 1 | awk '{print $2}')"
     echo "################################################"
-    echo "1. 查看详细节点配置 (Info)"
-    echo "2. 更新 Xray 内核 (Update Core)"
-    echo "3. 修改端口/SNI/重置密钥 (Re-Install)"
+    echo "1. 查看节点配置 (Info)"
+    echo "2. 更新/安装 内核 (Update Core)"
+    echo "3. 修改端口/重置 (Re-Install)"
     echo "4. 重启服务 (Restart)"
     echo "5. 卸载脚本 (Uninstall)"
     echo "------------------------------------------------"
-    echo -e "6. 配置 AI 分流 (Gemini -> US) $AI_STATUS"
+    echo -e "6. 配置 Gemini 分流 $AI_STATUS"
     echo "------------------------------------------------"
     echo "0. 退出"
     echo "################################################"
@@ -366,10 +371,19 @@ menu() {
 # --- 入口 ---
 check_root
 if [[ ! -f "$XRAY_CONF" ]]; then
-    ask_config; install_deps; install_core; generate_config; setup_system
+    # 第一次运行，自动修复 alias 并进入安装
+    if ! grep -q "alias xray=" ~/.bashrc; then
+        echo "alias xray='bash /root/x.sh'" >> ~/.bashrc
+    fi
+    ask_config; install_core; generate_config; setup_system
     green ">>> 安装完成！输入 'xray' 调出菜单。"
     show_info
     exec bash -l
 else
+    # 修复 alias 防止命令丢失
+    if ! grep -q "alias xray=" ~/.bashrc; then
+        echo "alias xray='bash /root/x.sh'" >> ~/.bashrc
+    fi
+    alias xray='bash /root/x.sh'
     menu
 fi
