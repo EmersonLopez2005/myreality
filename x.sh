@@ -441,6 +441,198 @@ show_ss2022_info() {
     echo ""
 }
 
+# --- 删除 SS2022 服务器 ---
+remove_ss2022_server() {
+    if ! check_ss2022_server; then
+        yellow "未检测到 SS2022 服务器"
+        return
+    fi
+    
+    if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
+    source "$ENV_FILE"
+    
+    clear
+    echo ""
+    echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\033[31m           🗑️  删除 SS2022 服务器\033[0m"
+    echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo ""
+    red "⚠️  警告：这将删除 SS2022 服务器配置"
+    echo -e "\033[33m端口:\033[0m $SS_PORT"
+    echo ""
+    get_ss_status
+    if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
+        green "✓ 分流配置将被保留"
+    else
+        yellow "注意：当前没有分流配置"
+    fi
+    echo ""
+    read -p "确定要删除 SS2022 服务器吗？(y/n): " confirm
+    if [[ "$confirm" != "y" ]]; then 
+        echo "已取消"
+        return
+    fi
+    
+    CURRENT_PK=$(grep -oP '"privateKey": "\K[^"]+' "$XRAY_CONF")
+    if [[ -z "$CURRENT_PK" ]]; then red "私钥读取失败"; return; fi
+    
+    # 检查是否有分流配置
+    if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
+        # 有分流，保留分流配置
+        US_ADDR=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].address' "$XRAY_CONF")
+        US_PORT=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].port' "$XRAY_CONF")
+        US_METHOD=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].method' "$XRAY_CONF")
+        US_PASS=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].password' "$XRAY_CONF")
+        
+        cat > "$XRAY_CONF" <<JSON
+{
+  "log": { "loglevel": "warning" },
+  "inbounds": [{
+    "listen": "0.0.0.0",
+    "port": $PORT,
+    "protocol": "vless",
+    "settings": {
+      "clients": [{ "id": "$UUID", "flow": "xtls-rprx-vision" }],
+      "decryption": "none"
+    },
+    "streamSettings": {
+      "network": "tcp",
+      "security": "reality",
+      "realitySettings": {
+        "show": false,
+        "dest": "${SNI}:443",
+        "serverNames": ["${SNI}"],
+        "privateKey": "$CURRENT_PK",
+        "shortIds": ["$SID"],
+        "fingerprint": "chrome"
+      }
+    }
+  }],
+  "outbounds": [
+    { "protocol": "freedom", "tag": "direct" },
+    {
+      "tag": "US_SS2022",
+      "protocol": "shadowsocks",
+      "settings": {
+        "servers": [{
+          "address": "$US_ADDR",
+          "port": $US_PORT,
+          "method": "$US_METHOD",
+          "password": "$US_PASS"
+        }]
+      }
+    },
+    { "tag": "block", "protocol": "blackhole" }
+  ],
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "type": "field",
+        "outboundTag": "direct",
+        "domain": [
+          "geosite:youtube",
+          "domain:googlevideo.com",
+          "domain:youtube.com",
+          "domain:ytimg.com",
+          "domain:ggpht.com"
+        ]
+      },
+      {
+        "type": "field",
+        "outboundTag": "block",
+        "network": "udp",
+        "port": "443",
+        "domain": [
+          "geosite:openai",
+          "geosite:google",
+          "geosite:bing",
+          "domain:ai.com",
+          "domain:openai.com",
+          "domain:chatgpt.com",
+          "domain:gemini.google.com",
+          "domain:bard.google.com",
+          "domain:accounts.google.com",
+          "domain:googleapis.com",
+          "domain:google.com"
+        ]
+      },
+      {
+        "type": "field",
+        "outboundTag": "US_SS2022",
+        "domain": [
+          "geosite:openai",
+          "geosite:google",
+          "geosite:bing",
+          "domain:ai.com",
+          "domain:openai.com",
+          "domain:chatgpt.com",
+          "domain:gemini.google.com",
+          "domain:bard.google.com",
+          "domain:accounts.google.com",
+          "domain:googleapis.com",
+          "domain:google.com"
+        ]
+      },
+      {
+        "type": "field",
+        "outboundTag": "direct",
+        "network": "udp,tcp"
+      }
+    ]
+  }
+}
+JSON
+    else
+        # 没有分流，只保留 Reality
+        cat > "$XRAY_CONF" <<JSON
+{
+  "log": { "loglevel": "warning" },
+  "inbounds": [{
+    "listen": "0.0.0.0",
+    "port": $PORT,
+    "protocol": "vless",
+    "settings": {
+      "clients": [{ "id": "$UUID", "flow": "xtls-rprx-vision" }],
+      "decryption": "none"
+    },
+    "streamSettings": {
+      "network": "tcp",
+      "security": "reality",
+      "realitySettings": {
+        "show": false,
+        "dest": "${SNI}:443",
+        "serverNames": ["${SNI}"],
+        "privateKey": "$CURRENT_PK",
+        "shortIds": ["$SID"],
+        "fingerprint": "chrome"
+      }
+    }
+  }],
+  "outbounds": [{ "protocol": "freedom", "tag": "direct" }]
+}
+JSON
+    fi
+    
+    # 删除 ENV 中的 SS2022 配置
+    sed -i '/^SS_PORT=/d' "$ENV_FILE"
+    sed -i '/^SS_METHOD=/d' "$ENV_FILE"
+    sed -i '/^SS_PASS=/d' "$ENV_FILE"
+    
+    systemctl restart xray
+    
+    if systemctl is-active --quiet xray; then
+        echo ""
+        green "✅ SS2022 服务器已删除！"
+        if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
+            green "✓ 分流配置已保留"
+        fi
+    else
+        echo ""
+        red "❌ 重启失败！"
+    fi
+}
+
 # --- 核心：智能分流 (修复 IPv6 泄露) ---
 setup_ai_routing_ss2022() {
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
@@ -903,6 +1095,7 @@ menu() {
     echo -e "\033[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo -e "\033[36m  [8]\033[0m 创建 SS2022 服务器 $SS_SERVER_STATUS"
     echo -e "\033[36m  [9]\033[0m 查看 SS2022 信息"
+    echo -e "\033[36m  [d]\033[0m 删除 SS2022 服务器"
     echo -e "\033[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo -e "\033[36m  [7]\033[0m 更新脚本 (Update Script)"
     echo -e "\033[36m  [0]\033[0m 退出"
@@ -919,6 +1112,7 @@ menu() {
         7) update_script ;;
         8) create_ss2022_server ;;
         9) show_ss2022_info ;;
+        d|D) remove_ss2022_server ;;
         0) exit 0 ;;
         *) red "无效选项" ;;
     esac
