@@ -223,8 +223,131 @@ create_ss2022_server() {
     echo ""
     read -p "按回车继续..."
     
-    # 生成配置（Reality + SS2022）
-    cat > "$XRAY_CONF" <<JSON
+    # 检查是否存在分流配置
+    get_ss_status
+    
+    # 生成配置（Reality + SS2022，保留分流）
+    if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
+        # 有分流配置，读取现有的外部 SS2022 配置
+        US_ADDR=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].address' "$XRAY_CONF")
+        US_PORT=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].port' "$XRAY_CONF")
+        US_METHOD=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].method' "$XRAY_CONF")
+        US_PASS=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].password' "$XRAY_CONF")
+        
+        cat > "$XRAY_CONF" <<JSON
+{
+  "log": { "loglevel": "warning" },
+  "inbounds": [
+    {
+      "listen": "0.0.0.0",
+      "port": $PORT,
+      "protocol": "vless",
+      "settings": {
+        "clients": [{ "id": "$UUID", "flow": "xtls-rprx-vision" }],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "${SNI}:443",
+          "serverNames": ["${SNI}"],
+          "privateKey": "$CURRENT_PK",
+          "shortIds": ["$SID"],
+          "fingerprint": "chrome"
+        }
+      }
+    },
+    {
+      "listen": "0.0.0.0",
+      "port": $SS_PORT,
+      "protocol": "shadowsocks",
+      "settings": {
+        "method": "$SS_METHOD",
+        "password": "$SS_PASS",
+        "network": "tcp,udp"
+      }
+    }
+  ],
+  "outbounds": [
+    { "protocol": "freedom", "tag": "direct" },
+    {
+      "tag": "US_SS2022",
+      "protocol": "shadowsocks",
+      "settings": {
+        "servers": [{
+          "address": "$US_ADDR",
+          "port": $US_PORT,
+          "method": "$US_METHOD",
+          "password": "$US_PASS"
+        }]
+      }
+    },
+    { "tag": "block", "protocol": "blackhole" }
+  ],
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "type": "field",
+        "outboundTag": "direct",
+        "domain": [
+          "geosite:youtube",
+          "domain:googlevideo.com",
+          "domain:youtube.com",
+          "domain:ytimg.com",
+          "domain:ggpht.com"
+        ]
+      },
+      {
+        "type": "field",
+        "outboundTag": "block",
+        "network": "udp",
+        "port": "443",
+        "domain": [
+          "geosite:openai",
+          "geosite:google",
+          "geosite:bing",
+          "domain:ai.com",
+          "domain:openai.com",
+          "domain:chatgpt.com",
+          "domain:gemini.google.com",
+          "domain:bard.google.com",
+          "domain:accounts.google.com",
+          "domain:googleapis.com",
+          "domain:google.com"
+        ]
+      },
+      {
+        "type": "field",
+        "outboundTag": "US_SS2022",
+        "domain": [
+          "geosite:openai",
+          "geosite:google",
+          "geosite:bing",
+          "domain:ai.com",
+          "domain:openai.com",
+          "domain:chatgpt.com",
+          "domain:gemini.google.com",
+          "domain:bard.google.com",
+          "domain:accounts.google.com",
+          "domain:googleapis.com",
+          "domain:google.com"
+        ]
+      },
+      {
+        "type": "field",
+        "outboundTag": "direct",
+        "network": "udp,tcp"
+      }
+    ]
+  }
+}
+JSON
+    else
+        # 没有分流，只有 Reality + SS2022 服务器
+        cat > "$XRAY_CONF" <<JSON
 {
   "log": { "loglevel": "warning" },
   "inbounds": [
@@ -263,8 +386,12 @@ create_ss2022_server() {
   "outbounds": [{ "protocol": "freedom", "tag": "direct" }]
 }
 JSON
+    fi
     
-    # 保存 SS2022 信息到 ENV
+    # 保存 SS2022 信息到 ENV（先删除旧的，再写入新的）
+    sed -i '/^SS_PORT=/d' "$ENV_FILE"
+    sed -i '/^SS_METHOD=/d' "$ENV_FILE"
+    sed -i '/^SS_PASS=/d' "$ENV_FILE"
     cat >> "$ENV_FILE" <<ENV
 SS_PORT=$SS_PORT
 SS_METHOD=$SS_METHOD
@@ -357,7 +484,123 @@ setup_ai_routing_ss2022() {
     # 2. [BLOCK]    UDP 443 -> 针对 Google/OpenAI 拦截。强制 TCP，防止 IPv6/QUIC 绕过。
     # 3. [PROXY]    Google全家桶/OpenAI -> US Proxy。包含 geosite:google，确保账号验证不走 HK IPv6。
     
-    cat > "$XRAY_CONF" <<JSON
+    # 检查是否存在 SS2022 服务器
+    if check_ss2022_server && [[ -n "$SS_PORT" ]] && [[ -n "$SS_METHOD" ]] && [[ -n "$SS_PASS" ]]; then
+        # 保留 SS2022 服务器配置
+        cat > "$XRAY_CONF" <<JSON
+{
+  "log": { "loglevel": "warning" },
+  "inbounds": [
+    {
+      "listen": "0.0.0.0",
+      "port": $PORT,
+      "protocol": "vless",
+      "settings": {
+        "clients": [{ "id": "$UUID", "flow": "xtls-rprx-vision" }],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "${SNI}:443",
+          "serverNames": ["${SNI}"],
+          "privateKey": "$CURRENT_PK",
+          "shortIds": ["$SID"],
+          "fingerprint": "chrome"
+        }
+      }
+    },
+    {
+      "listen": "0.0.0.0",
+      "port": $SS_PORT,
+      "protocol": "shadowsocks",
+      "settings": {
+        "method": "$SS_METHOD",
+        "password": "$SS_PASS",
+        "network": "tcp,udp"
+      }
+    }
+  ],
+  "outbounds": [
+    { "protocol": "freedom", "tag": "direct" },
+    {
+      "tag": "US_SS2022",
+      "protocol": "shadowsocks",
+      "settings": {
+        "servers": [{
+          "address": "$us_addr",
+          "port": $us_port,
+          "method": "$us_method",
+          "password": "$us_pass"
+        }]
+      }
+    },
+    { "tag": "block", "protocol": "blackhole" }
+  ],
+  "routing": {
+    "domainStrategy": "IPIfNonMatch",
+    "rules": [
+      {
+        "type": "field",
+        "outboundTag": "direct",
+        "domain": [
+          "geosite:youtube",
+          "domain:googlevideo.com",
+          "domain:youtube.com",
+          "domain:ytimg.com",
+          "domain:ggpht.com"
+        ]
+      },
+      {
+        "type": "field",
+        "outboundTag": "block",
+        "network": "udp",
+        "port": "443",
+        "domain": [
+          "geosite:openai",
+          "geosite:google",
+          "geosite:bing",
+          "domain:ai.com",
+          "domain:openai.com",
+          "domain:chatgpt.com",
+          "domain:gemini.google.com",
+          "domain:bard.google.com",
+          "domain:accounts.google.com",
+          "domain:googleapis.com",
+          "domain:google.com"
+        ]
+      },
+      {
+        "type": "field",
+        "outboundTag": "US_SS2022",
+        "domain": [
+          "geosite:openai",
+          "geosite:google",
+          "geosite:bing",
+          "domain:ai.com",
+          "domain:openai.com",
+          "domain:chatgpt.com",
+          "domain:gemini.google.com",
+          "domain:bard.google.com",
+          "domain:accounts.google.com",
+          "domain:googleapis.com",
+          "domain:google.com"
+        ]
+      },
+      {
+        "type": "field",
+        "outboundTag": "direct",
+        "network": "udp,tcp"
+      }
+    ]
+  }
+}
+JSON
+    else
+        # 没有 SS2022 服务器，只有 Reality
+        cat > "$XRAY_CONF" <<JSON
 {
   "log": { "loglevel": "warning" },
   "inbounds": [{
@@ -456,6 +699,7 @@ setup_ai_routing_ss2022() {
   }
 }
 JSON
+    fi
     systemctl restart xray
     if systemctl is-active --quiet xray; then
         echo ""
@@ -463,6 +707,117 @@ JSON
     else
         echo ""
         red "❌ 启动失败，请检查端口/密钥！"
+    fi
+}
+
+# --- 关闭分流（保留 SS2022 服务器）---
+disable_routing() {
+    if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
+    source "$ENV_FILE"
+    
+    get_ss_status
+    if [[ -z "$SS_IP" || "$SS_IP" == "null" ]]; then
+        yellow "分流已经是关闭状态"
+        return
+    fi
+    
+    CURRENT_PK=$(grep -oP '"privateKey": "\K[^"]+' "$XRAY_CONF")
+    if [[ -z "$CURRENT_PK" ]]; then red "私钥读取失败"; return; fi
+    
+    clear
+    echo ""
+    echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\033[33m           ❌ 关闭分流功能\033[0m"
+    echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo ""
+    yellow "将关闭分流，所有流量恢复直连"
+    if check_ss2022_server && [[ -n "$SS_PORT" ]]; then
+        green "✓ 将保留 SS2022 服务器配置"
+    fi
+    echo ""
+    read -p "确认关闭? (y/n) [n]: " confirm
+    [[ "$confirm" != "y" ]] && return
+    
+    # 检查是否有 SS2022 服务器
+    if check_ss2022_server && [[ -n "$SS_PORT" ]] && [[ -n "$SS_METHOD" ]] && [[ -n "$SS_PASS" ]]; then
+        # 保留 SS2022 服务器
+        cat > "$XRAY_CONF" <<JSON
+{
+  "log": { "loglevel": "warning" },
+  "inbounds": [
+    {
+      "listen": "0.0.0.0",
+      "port": $PORT,
+      "protocol": "vless",
+      "settings": {
+        "clients": [{ "id": "$UUID", "flow": "xtls-rprx-vision" }],
+        "decryption": "none"
+      },
+      "streamSettings": {
+        "network": "tcp",
+        "security": "reality",
+        "realitySettings": {
+          "show": false,
+          "dest": "${SNI}:443",
+          "serverNames": ["${SNI}"],
+          "privateKey": "$CURRENT_PK",
+          "shortIds": ["$SID"],
+          "fingerprint": "chrome"
+        }
+      }
+    },
+    {
+      "listen": "0.0.0.0",
+      "port": $SS_PORT,
+      "protocol": "shadowsocks",
+      "settings": {
+        "method": "$SS_METHOD",
+        "password": "$SS_PASS",
+        "network": "tcp,udp"
+      }
+    }
+  ],
+  "outbounds": [{ "protocol": "freedom", "tag": "direct" }]
+}
+JSON
+    else
+        # 只有 Reality
+        cat > "$XRAY_CONF" <<JSON
+{
+  "log": { "loglevel": "warning" },
+  "inbounds": [{
+    "listen": "0.0.0.0",
+    "port": $PORT,
+    "protocol": "vless",
+    "settings": {
+      "clients": [{ "id": "$UUID", "flow": "xtls-rprx-vision" }],
+      "decryption": "none"
+    },
+    "streamSettings": {
+      "network": "tcp",
+      "security": "reality",
+      "realitySettings": {
+        "show": false,
+        "dest": "${SNI}:443",
+        "serverNames": ["${SNI}"],
+        "privateKey": "$CURRENT_PK",
+        "shortIds": ["$SID"],
+        "fingerprint": "chrome"
+      }
+    }
+  }],
+  "outbounds": [{ "protocol": "freedom", "tag": "direct" }]
+}
+JSON
+    fi
+    
+    systemctl restart xray
+    if systemctl is-active --quiet xray; then
+        echo ""
+        green "✅ 分流已关闭，流量恢复直连！"
+    else
+        echo ""
+        red "❌ 重启失败！"
     fi
 }
 
@@ -543,7 +898,8 @@ menu() {
     echo -e "\033[36m  [4]\033[0m 重启服务"
     echo -e "\033[36m  [5]\033[0m 彻底卸载 (Uninstall & Clean)"
     echo -e "\033[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\033[36m  [6]\033[0m 配置分流 (Gemini+GPT -> US) $AI_STATUS"
+    echo -e "\033[36m  [6]\033[0m 开启分流 (Gemini+GPT -> US) $AI_STATUS"
+    echo -e "\033[36m  [a]\033[0m 关闭分流 (恢复直连)"
     echo -e "\033[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo -e "\033[36m  [8]\033[0m 创建 SS2022 服务器 $SS_SERVER_STATUS"
     echo -e "\033[36m  [9]\033[0m 查看 SS2022 信息"
@@ -559,6 +915,7 @@ menu() {
         4) systemctl restart xray; green "已重启" ;;
         5) uninstall_xray ;;
         6) setup_ai_routing_ss2022 ;;
+        a|A) disable_routing ;;
         7) update_script ;;
         8) create_ss2022_server ;;
         9) show_ss2022_info ;;
