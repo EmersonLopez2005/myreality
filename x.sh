@@ -2,7 +2,7 @@
 set -u
 
 # ==================================================
-# Reality 管理脚本 v2.5
+# Reality 管理脚本 v2.6
 # ==================================================
 
 # --- 全局变量 ---
@@ -94,7 +94,7 @@ ask_config() {
     echo "╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝      ╚═╝  "
     echo -e "\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\033[32m            Reality 极简安装脚本 v2.5\033[0m"
+    echo -e "\033[32m            Reality 极简安装脚本 v2.6\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo ""
     
@@ -115,12 +115,10 @@ install_core() {
 }
 
 # --- 核心：配置生成 ---
-# 增加了 sniffing 模块，确保 UDP 流量能被正确路由
 get_inbound_config() {
     local tag=$1
     local port=$2
     local protocol=$3
-    # 如果是 reality (vless)，添加 streamSettings
     if [[ "$protocol" == "vless" ]]; then
         echo '{
             "tag": "'$tag'",
@@ -150,7 +148,6 @@ get_inbound_config() {
             }
         }'
     else
-        # SS 入站也开启 sniffing，以防万一
         echo '{
             "tag": "'$tag'",
             "listen": "0.0.0.0",
@@ -179,8 +176,6 @@ generate_config() {
     SHORT_ID=$(openssl rand -hex 4)
     CURRENT_PK=$PK
 
-    # 构建 Inbound (Reality)
-    # 这里为了方便直接拼接字符串，稍微ugly一点但稳定
     cat > "$XRAY_CONF" <<JSON
 {
   "log": { "loglevel": "warning" },
@@ -279,11 +274,9 @@ create_ss2022_server() {
     
     get_ss_status
     
-    # 构造两个 inbound 的 JSON 字符串
     INBOUND_REALITY=$(get_inbound_config "reality-in" $PORT "vless")
     INBOUND_SS=$(get_inbound_config "ss-in" $SS_PORT "shadowsocks")
 
-    # 构建配置 (如果有分流)
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
         US_ADDR=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].address' "$XRAY_CONF")
         US_PORT=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].port' "$XRAY_CONF")
@@ -324,7 +317,6 @@ create_ss2022_server() {
 }
 JSON
     else
-        # 没有分流
         cat > "$XRAY_CONF" <<JSON
 {
   "log": { "loglevel": "warning" },
@@ -342,7 +334,6 @@ SS_PORT=$SS_PORT
 SS_METHOD=$SS_METHOD
 SS_PASS=$SS_PASS
 ENV
-    
     systemctl restart xray
     if systemctl is-active --quiet xray; then
         echo ""; green "✅ SS2022 服务器创建成功！"; echo ""; show_ss2022_info
@@ -358,21 +349,30 @@ show_ss2022_info() {
     [[ -z "$CURRENT_IP" ]] && CURRENT_IP=$(curl -s https://api.ipify.org)
     SS_LINK=$(echo -n "${SS_METHOD}:${SS_PASS}" | base64 -w 0)
     SS_URL="ss://${SS_LINK}@${CURRENT_IP}:${SS_PORT}#SS2022-$(hostname)"
-    echo ""; yellow "👇 SS2022 链接:"; echo -e "\033[36m${SS_URL}\033[0m"; echo ""
+    
+    echo ""
+    echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\033[32m           🔐 SS2022 服务器信息\033[0m"
+    echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\033[33m服务器地址:\033[0m $CURRENT_IP"
+    echo -e "\033[33m端口:\033[0m       $SS_PORT"
+    echo -e "\033[33m加密方式:\033[0m   $SS_METHOD"
+    echo -e "\033[33m密码:\033[0m       $SS_PASS"
+    echo -e "\033[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo ""
+    yellow "👇 复制下方链接 (Shadowrocket / V2RayN / NekoBox):"
+    echo -e "\033[36m${SS_URL}\033[0m"
+    echo ""
 }
 
 remove_ss2022_server() {
-    # 简略版逻辑，与之前一致，使用 Reality 原生配置覆盖
     if ! check_ss2022_server; then yellow "未检测到 SS2022"; return; fi
     source "$ENV_FILE"
     CURRENT_PK=$(grep -oP '"privateKey": "\K[^"]+' "$XRAY_CONF")
-    
     INBOUND_REALITY=$(get_inbound_config "reality-in" $PORT "vless")
     
-    # 获取分流信息
     get_ss_status
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
-        # 仅删除 SS 入站，保留分流出站
         US_ADDR=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].address' "$XRAY_CONF")
         US_PORT=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].port' "$XRAY_CONF")
         US_METHOD=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].method' "$XRAY_CONF")
@@ -424,7 +424,6 @@ JSON
     green "✅ SS2022 已删除"
 }
 
-# --- 核心：智能分流 (最终版) ---
 setup_ai_routing_ss2022() {
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
     source "$ENV_FILE"
@@ -577,11 +576,9 @@ JSON
 }
 
 disable_routing() {
-    # 简化版：仅恢复直连，保留 SS
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
     source "$ENV_FILE"
     CURRENT_PK=$(grep -oP '"privateKey": "\K[^"]+' "$XRAY_CONF")
-    
     INBOUND_REALITY=$(get_inbound_config "reality-in" $PORT "vless")
     
     if check_ss2022_server && [[ -n "$SS_PORT" ]]; then
@@ -607,22 +604,37 @@ show_info() {
     source "$ENV_FILE"
     get_ss_status
     CURRENT_IP=$(curl -s -4 https://api.ipify.org)
+    [[ -z "$CURRENT_IP" ]] && CURRENT_IP=$(curl -s https://api.ipify.org)
     REMARK="$(hostname)"
+    
     LINK="vless://${UUID}@${CURRENT_IP}:${PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=${SNI}&fp=chrome&pbk=${PBK}&sid=${SID}&type=tcp#${REMARK}"
     
-    echo ""; echo -e "\033[32m           📡 Reality 节点信息\033[0m"
-    echo -e "\033[33m地址:\033[0m ${CURRENT_IP}:${PORT}"
-    echo -e "\033[33mUUID:\033[0m ${UUID}"
-    echo -e "\033[33mSNI:\033[0m  ${SNI}"
-    echo -e "\033[33mPBK:\033[0m  ${PBK}"
-    echo -e "\033[33mSID:\033[0m  ${SID}"
+    echo ""
+    echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\033[32m           📡 节点配置信息 (Reality)\033[0m"
+    echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\033[33m地址 (Address):\033[0m     ${CURRENT_IP}"
+    echo -e "\033[33m端口 (Port):\033[0m        ${PORT}"
+    echo -e "\033[33m用户ID (UUID):\033[0m      ${UUID}"
+    echo -e "\033[33m流控 (Flow):\033[0m        xtls-rprx-vision"
+    echo -e "\033[33m传输 (Network):\033[0m     tcp"
+    echo -e "\033[33m伪装域名 (SNI):\033[0m     ${SNI}"
+    echo -e "\033[33m指纹 (Fingerprint):\033[0m chrome"
+    echo -e "\033[33m公钥 (Public Key):\033[0m  ${PBK}"
+    echo -e "\033[33mShortId:\033[0m            ${SID}"
     
+    echo -e "\033[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
-        echo -e "\033[33m分流:\033[0m  \033[32m✅ 开启 (保活+嗅探)\033[0m"
+        echo -e "\033[33m分流 (Route):\033[0m       \033[32m✅ 开启 (嗅探+保活)\033[0m"
     else
-        echo -e "\033[33m分流:\033[0m  \033[31m⛔ 关闭\033[0m"
+        echo -e "\033[33m分流 (Route):\033[0m       \033[31m⛔ 关闭\033[0m"
     fi
-    echo ""; echo -e "\033[36m${LINK}\033[0m"; echo ""
+    echo -e "\033[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    
+    echo ""
+    yellow "👇 复制下方链接 (V2RayN / NekoBox / Shadowrocket):"
+    echo -e "\033[36m${LINK}\033[0m"
+    echo ""
 }
 
 menu() {
@@ -643,25 +655,36 @@ menu() {
         SS_SERVER_STATUS="[\033[31m未创建\033[0m]"
     fi
     
-    echo -e "\033[32m              Reality 管理面板 v2.5\033[0m"
-    echo "-------------------------------------------------"
-    echo -e "  [1] 查看 Reality 节点"
-    echo -e "  [2] 更新内核"
-    echo -e "  [3] 初始化/重置 Reality"
-    echo -e "  [4] 重启服务"
-    echo -e "  [5] 彻底卸载"
-    echo "-------------------------------------------------"
-    echo -e "  [6] 开启分流 (Gemini+GPT -> US) $AI_STATUS"
-    echo -e "  [a] 关闭分流 (恢复直连)"
-    echo "-------------------------------------------------"
-    echo -e "  [8] 创建 SS2022 服务器 $SS_SERVER_STATUS"
-    echo -e "  [9] 查看 SS2022 信息"
-    echo -e "  [d] 删除 SS2022 服务器"
-    echo "-------------------------------------------------"
-    echo -e "  [7] 更新脚本"
-    echo -e "  [0] 退出"
     echo ""
-    read -p "请选择: " num
+    echo -e "\033[33m"
+    echo "██████╗ ███████╗ █████╗ ██╗    ██╗████████╗██╗  ██╗"
+    echo "██╔══██╗██╔════╝██╔══██╗██╗    ██║╚══██╔══╝╚██╗ ██╔╝"
+    echo "██████╔╝█████╗  ███████║██╗    ██║   ██║    ╚████╔╝"
+    echo "██╔══██╗██╔══╝  ██╔══██║██╗    ██║   ██║     ╚██╔╝ "
+    echo "██║  ██║███████╗██║  ██║███████╗██║   ██║      ██║  "
+    echo "╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝      ╚═╝  "
+    echo -e "\033[0m"
+    echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\033[32m              Reality 管理面板 v2.6\033[0m"
+    echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo ""
+    echo -e "\033[36m  [1]\033[0m 查看 Reality 节点"
+    echo -e "\033[36m  [2]\033[0m 更新内核"
+    echo -e "\033[36m  [3]\033[0m 初始化/重置 Reality"
+    echo -e "\033[36m  [4]\033[0m 重启服务"
+    echo -e "\033[36m  [5]\033[0m 彻底卸载 (Uninstall & Clean)"
+    echo -e "\033[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\033[36m  [6]\033[0m 开启分流 (Gemini+GPT -> US) $AI_STATUS"
+    echo -e "\033[36m  [a]\033[0m 关闭分流 (恢复直连)"
+    echo -e "\033[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\033[36m  [8]\033[0m 创建 SS2022 服务器 $SS_SERVER_STATUS"
+    echo -e "\033[36m  [9]\033[0m 查看 SS2022 信息"
+    echo -e "\033[36m  [d]\033[0m 删除 SS2022 服务器"
+    echo -e "\033[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
+    echo -e "\033[36m  [7]\033[0m 更新脚本 (Update Script)"
+    echo -e "\033[36m  [0]\033[0m 退出"
+    echo ""
+    read -p "$(echo -e '\033[33m请选择:\033[0m ') " num
     case "$num" in
         1) show_info ;;
         2) install_core; systemctl restart xray ;;
