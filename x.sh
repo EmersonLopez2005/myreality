@@ -2,7 +2,7 @@
 set -u
 
 # ==================================================
-# Reality 管理脚本
+# Reality 管理脚本 v2.3 
 # ==================================================
 
 # --- 全局变量 ---
@@ -95,7 +95,7 @@ ask_config() {
     echo "╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝      ╚═╝  "
     echo -e "\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\033[32m            Reality 极简安装脚本 v2.1\033[0m"
+    echo -e "\033[32m            Reality 极简安装脚本 v2.3\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo ""
     
@@ -230,6 +230,7 @@ create_ss2022_server() {
         US_METHOD=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].method' "$XRAY_CONF")
         US_PASS=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].password' "$XRAY_CONF")
         
+        # 注意：这里也需要加上 sockopt，以防用户先创建SS再开分流
         cat > "$XRAY_CONF" <<JSON
 {
   "log": { "loglevel": "warning" },
@@ -279,6 +280,12 @@ create_ss2022_server() {
           "method": "$US_METHOD",
           "password": "$US_PASS"
         }]
+      },
+      "streamSettings": {
+        "sockopt": {
+          "tcpKeepAliveIdle": 100,
+          "tcpKeepAliveInterval": 30
+        }
       }
     },
     { "tag": "block", "protocol": "blackhole" }
@@ -304,25 +311,6 @@ create_ss2022_server() {
       },
       {
         "type": "field",
-        "outboundTag": "block",
-        "network": "udp",
-        "port": "443",
-        "domain": [
-          "geosite:openai",
-          "geosite:google",
-          "geosite:bing",
-          "domain:ai.com",
-          "domain:openai.com",
-          "domain:chatgpt.com",
-          "domain:gemini.google.com",
-          "domain:bard.google.com",
-          "domain:accounts.google.com",
-          "domain:googleapis.com",
-          "domain:google.com"
-        ]
-      },
-      {
-        "type": "field",
         "outboundTag": "US_SS2022",
         "domain": [
           "geosite:openai",
@@ -340,6 +328,25 @@ create_ss2022_server() {
           "regexp:.digicert.com\$",
           "regexp:.letsencrypt.org\$",
           "regexp:.amazontrust.com\$"
+        ]
+      },
+      {
+        "type": "field",
+        "outboundTag": "block",
+        "network": "udp",
+        "port": "443",
+        "domain": [
+          "geosite:openai",
+          "geosite:google",
+          "geosite:bing",
+          "domain:ai.com",
+          "domain:openai.com",
+          "domain:chatgpt.com",
+          "domain:gemini.google.com",
+          "domain:bard.google.com",
+          "domain:accounts.google.com",
+          "domain:googleapis.com",
+          "domain:google.com"
         ]
       },
       {
@@ -527,6 +534,12 @@ remove_ss2022_server() {
           "method": "$US_METHOD",
           "password": "$US_PASS"
         }]
+      },
+      "streamSettings": {
+        "sockopt": {
+          "tcpKeepAliveIdle": 100,
+          "tcpKeepAliveInterval": 30
+        }
       }
     },
     { "tag": "block", "protocol": "blackhole" }
@@ -644,7 +657,7 @@ JSON
     fi
 }
 
-# --- 核心：智能分流 (修复 IPv6 泄露 + SS直连优化) ---
+# --- 核心：智能分流 (修复 IPv6 泄露 + SS直连优化 + HK-US保活) ---
 setup_ai_routing_ss2022() {
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
     source "$ENV_FILE"
@@ -694,12 +707,14 @@ setup_ai_routing_ss2022() {
 
     green "正在写入强力路由规则..."
     green "DNS 策略: $DNS_STRATEGY"
+    green "启用 HK-US 链路心跳保活 (100s)"
     
     # 策略解释 :
     # 1. [BYPASS]   SS2022 入站流量 (ss-in) -> 强制直连 (Direct)。避免 SS 流量被劫持到 US。
     # 2. [PRIORITY] YouTube -> 直连 (HK)
     # 3. [BLOCK]    UDP 443 -> 针对 Google/OpenAI 拦截。强制 TCP，防止 IPv6/QUIC 绕过
-    # 4. [PROXY]    Google全家桶/OpenAI/OCSP/Cert -> US Proxy。包含 geosite:google。
+    # 4. [PROXY]    Google全家桶/OpenAI/OCSP/Cert -> US Proxy。
+    # 5. [ALIVE]    sockopt.tcpKeepAliveIdle: 100 -> 保持 HK-US 链路活跃
     
     # 检查是否存在 SS2022 服务器
     if check_ss2022_server && [[ -n "$SS_PORT" ]] && [[ -n "$SS_METHOD" ]] && [[ -n "$SS_PASS" ]]; then
@@ -766,6 +781,12 @@ setup_ai_routing_ss2022() {
           "method": "$us_method",
           "password": "$us_pass"
         }]
+      },
+      "streamSettings": {
+        "sockopt": {
+          "tcpKeepAliveIdle": 100,
+          "tcpKeepAliveInterval": 30
+        }
       }
     },
     { "tag": "block", "protocol": "blackhole" }
@@ -889,6 +910,12 @@ JSON
           "method": "$us_method",
           "password": "$us_pass"
         }]
+      },
+      "streamSettings": {
+        "sockopt": {
+          "tcpKeepAliveIdle": 100,
+          "tcpKeepAliveInterval": 30
+        }
       }
     },
     { "tag": "block", "protocol": "blackhole" }
@@ -960,7 +987,7 @@ JSON
     systemctl restart xray
     if systemctl is-active --quiet xray; then
         echo ""
-        green "✅ [保留] 分流配置成功 (已排除 SS 流量)"
+        green "✅ [保留] 分流配置成功 (Policy + HK-US 保活优化已应用)"
     else
         echo ""
         red "❌ [失败] 启动失败，请检查端口或密钥"
@@ -997,7 +1024,7 @@ disable_routing() {
     
     # 检查是否有 SS2022 服务器
     if check_ss2022_server && [[ -n "$SS_PORT" ]] && [[ -n "$SS_METHOD" ]] && [[ -n "$SS_PASS" ]]; then
-        # 保留 SS2022 服务器，添加标签（虽然直连用不上，但保持一致）
+        # 保留 SS2022 服务器，添加标签
         cat > "$XRAY_CONF" <<JSON
 {
   "log": { "loglevel": "warning" },
@@ -1108,6 +1135,7 @@ show_info() {
         echo -e "\033[33m分流状态 (Route):\033[0m    \033[32m✅ 已启用 (SS2022)\033[0m"
         echo -e "\033[33mGemini/GPT (Target):\033[0m $SS_IP"
         echo -e "\033[33mSS直连策略 (Policy):\033[0m \033[32m✅ 已豁免 (强制直连)\033[0m"
+        echo -e "\033[33mHK-US保活 (KeepAlive):\033[0m \033[32m✅ 已启用 (100s)\033[0m"
     else
         echo -e "\033[33m分流状态 (Route):\033[0m    \033[31m⛔ 未启用 (全部直连)\033[0m"
     fi
@@ -1147,7 +1175,7 @@ menu() {
     echo "╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝      ╚═╝  "
     echo -e "\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\033[32m              Reality 管理面板 v2.1\033[0m"
+    echo -e "\033[32m              Reality 管理面板 v2.3\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo ""
     echo -e "\033[36m  [1]\033[0m 查看 Reality 节点"
