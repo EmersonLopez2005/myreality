@@ -2,7 +2,7 @@
 set -u
 
 # ==================================================
-# Reality 管理脚本 
+# Reality 管理脚本
 # ==================================================
 
 # --- 全局变量 ---
@@ -23,7 +23,7 @@ install_self() {
         curl -o "$SCRIPT_PATH" -Ls "https://raw.githubusercontent.com/EmersonLopez2005/myreality/main/x.sh"
         chmod +x "$SCRIPT_PATH"
     fi
-
+    # 修复快捷键
     if ! grep -q "alias xray=" ~/.bashrc; then
         echo "alias xray='bash $SCRIPT_PATH'" >> ~/.bashrc
         alias xray='bash $SCRIPT_PATH'
@@ -95,7 +95,7 @@ ask_config() {
     echo "╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝      ╚═╝  "
     echo -e "\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\033[32m            Reality 极简安装脚本 v2.0\033[0m"
+    echo -e "\033[32m            Reality 极简安装脚本 v2.1\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo ""
     
@@ -184,7 +184,6 @@ create_ss2022_server() {
     if check_ss2022_server; then
         SS_PORT=$(jq -r '.inbounds[] | select(.protocol=="shadowsocks") | .port' "$XRAY_CONF")
         SS_METHOD=$(jq -r '.inbounds[] | select(.protocol=="shadowsocks") | .settings.method' "$XRAY_CONF")
-        SS_PASS=$(jq -r '.inbounds[] | select(.protocol=="shadowsocks") | .settings.password' "$XRAY_CONF")
         
         yellow "⚠️  检测到已存在 SS2022 服务器"
         echo -e "\033[33m端口:\033[0m $SS_PORT"
@@ -206,11 +205,9 @@ create_ss2022_server() {
     
     if [[ "$method_choice" == "2" ]]; then
         SS_METHOD="2022-blake3-aes-256-gcm"
-        # 生成 32 字节密钥 (base64)
         SS_PASS=$(openssl rand -base64 32)
     else
         SS_METHOD="2022-blake3-aes-128-gcm"
-        # 生成 16 字节密钥 (base64)
         SS_PASS=$(openssl rand -base64 16)
     fi
     
@@ -227,7 +224,7 @@ create_ss2022_server() {
     
     # 生成配置（Reality + SS2022，保留分流）
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
-        # 有分流配置，读取现有的外部 SS2022 配置
+        # 有分流配置，保留规则，并添加 SS 白名单
         US_ADDR=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].address' "$XRAY_CONF")
         US_PORT=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].port' "$XRAY_CONF")
         US_METHOD=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].method' "$XRAY_CONF")
@@ -259,6 +256,7 @@ create_ss2022_server() {
       }
     },
     {
+      "tag": "ss-in",
       "listen": "0.0.0.0",
       "port": $SS_PORT,
       "protocol": "shadowsocks",
@@ -288,6 +286,11 @@ create_ss2022_server() {
   "routing": {
     "domainStrategy": "IPIfNonMatch",
     "rules": [
+      {
+        "type": "field",
+        "inboundTag": ["ss-in"],
+        "outboundTag": "direct"
+      },
       {
         "type": "field",
         "outboundTag": "direct",
@@ -332,7 +335,11 @@ create_ss2022_server() {
           "domain:bard.google.com",
           "domain:accounts.google.com",
           "domain:googleapis.com",
-          "domain:google.com"
+          "domain:google.com",
+          "regexp:ocsp.",
+          "regexp:.digicert.com\$",
+          "regexp:.letsencrypt.org\$",
+          "regexp:.amazontrust.com\$"
         ]
       },
       {
@@ -372,6 +379,7 @@ JSON
       }
     },
     {
+      "tag": "ss-in",
       "listen": "0.0.0.0",
       "port": $SS_PORT,
       "protocol": "shadowsocks",
@@ -570,7 +578,11 @@ remove_ss2022_server() {
           "domain:bard.google.com",
           "domain:accounts.google.com",
           "domain:googleapis.com",
-          "domain:google.com"
+          "domain:google.com",
+          "regexp:ocsp.",
+          "regexp:.digicert.com\$",
+          "regexp:.letsencrypt.org\$",
+          "regexp:.amazontrust.com\$"
         ]
       },
       {
@@ -632,7 +644,7 @@ JSON
     fi
 }
 
-# --- 核心：智能分流  ---
+# --- 核心：智能分流 (修复 IPv6 泄露 + SS直连优化) ---
 setup_ai_routing_ss2022() {
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
     source "$ENV_FILE"
@@ -684,13 +696,14 @@ setup_ai_routing_ss2022() {
     green "DNS 策略: $DNS_STRATEGY"
     
     # 策略解释 :
-    # 1. [PRIORITY] YouTube -> 直连 (HK)
-    # 2. [BLOCK]    UDP 443 -> 针对 Google/OpenAI 拦截。强制 TCP，防止 IPv6/QUIC 绕过
-    # 3. [PROXY]    Google全家桶/OpenAI -> US Proxy。
-    # 4. [DNS 优化] 内置 DNS 缓存，减少首次访问延迟
+    # 1. [BYPASS]   SS2022 入站流量 (ss-in) -> 强制直连 (Direct)。避免 SS 流量被劫持到 US。
+    # 2. [PRIORITY] YouTube -> 直连 (HK)
+    # 3. [BLOCK]    UDP 443 -> 针对 Google/OpenAI 拦截。强制 TCP，防止 IPv6/QUIC 绕过
+    # 4. [PROXY]    Google全家桶/OpenAI/OCSP/Cert -> US Proxy。包含 geosite:google。
+    
     # 检查是否存在 SS2022 服务器
     if check_ss2022_server && [[ -n "$SS_PORT" ]] && [[ -n "$SS_METHOD" ]] && [[ -n "$SS_PASS" ]]; then
-        # 保留 SS2022 服务器配置
+        # 保留 SS2022 服务器配置，并添加 ss-in 标签
         cat > "$XRAY_CONF" <<JSON
 {
   "log": { "loglevel": "warning" },
@@ -730,6 +743,7 @@ setup_ai_routing_ss2022() {
       }
     },
     {
+      "tag": "ss-in",
       "listen": "0.0.0.0",
       "port": $SS_PORT,
       "protocol": "shadowsocks",
@@ -759,6 +773,11 @@ setup_ai_routing_ss2022() {
   "routing": {
     "domainStrategy": "IPIfNonMatch",
     "rules": [
+      {
+        "type": "field",
+        "inboundTag": ["ss-in"],
+        "outboundTag": "direct"
+      },
       {
         "type": "field",
         "outboundTag": "direct",
@@ -941,7 +960,7 @@ JSON
     systemctl restart xray
     if systemctl is-active --quiet xray; then
         echo ""
-        green "✅ [保留] 分流配置成功"
+        green "✅ [保留] 分流配置成功 (已排除 SS 流量)"
     else
         echo ""
         red "❌ [失败] 启动失败，请检查端口或密钥"
@@ -978,7 +997,7 @@ disable_routing() {
     
     # 检查是否有 SS2022 服务器
     if check_ss2022_server && [[ -n "$SS_PORT" ]] && [[ -n "$SS_METHOD" ]] && [[ -n "$SS_PASS" ]]; then
-        # 保留 SS2022 服务器
+        # 保留 SS2022 服务器，添加标签（虽然直连用不上，但保持一致）
         cat > "$XRAY_CONF" <<JSON
 {
   "log": { "loglevel": "warning" },
@@ -1005,6 +1024,7 @@ disable_routing() {
       }
     },
     {
+      "tag": "ss-in",
       "listen": "0.0.0.0",
       "port": $SS_PORT,
       "protocol": "shadowsocks",
@@ -1087,7 +1107,7 @@ show_info() {
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
         echo -e "\033[33m分流状态 (Route):\033[0m    \033[32m✅ 已启用 (SS2022)\033[0m"
         echo -e "\033[33mGemini/GPT (Target):\033[0m $SS_IP"
-        echo -e "\033[33mYouTube (Target):\033[0m    本地直连"
+        echo -e "\033[33mSS直连策略 (Policy):\033[0m \033[32m✅ 已豁免 (强制直连)\033[0m"
     else
         echo -e "\033[33m分流状态 (Route):\033[0m    \033[31m⛔ 未启用 (全部直连)\033[0m"
     fi
@@ -1127,7 +1147,7 @@ menu() {
     echo "╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝      ╚═╝  "
     echo -e "\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\033[32m              Reality 管理面板 v2.0\033[0m"
+    echo -e "\033[32m              Reality 管理面板 v2.1\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo ""
     echo -e "\033[36m  [1]\033[0m 查看 Reality 节点"
