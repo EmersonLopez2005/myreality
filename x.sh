@@ -668,13 +668,27 @@ setup_ai_routing_ss2022() {
     echo "2) 2022-blake3-aes-256-gcm"
     read -p "选择 [1-2]: " m
     [[ "$m" == "2" ]] && us_method="2022-blake3-aes-256-gcm" || us_method="2022-blake3-aes-128-gcm"
+    
+    echo ""
+    echo "请选择 DNS 查询策略:"
+    echo "1) IPv4 优先 (默认，稳定性好)"
+    echo "2) IPv6 优先 (US VPS 有 IPv6 优势时选择)"
+    echo "3) 同时查询 IPv4 和 IPv6"
+    read -p "选择 [1-3]: " dns_choice
+    case "$dns_choice" in
+        2) DNS_STRATEGY="UseIPv6" ;;
+        3) DNS_STRATEGY="UseIP" ;;
+        *) DNS_STRATEGY="UseIPv4" ;;
+    esac
 
     green "正在写入强力路由规则..."
+    green "DNS 策略: $DNS_STRATEGY"
     
     # 策略解释 :
     # 1. [PRIORITY] YouTube -> 直连 (HK)。
     # 2. [BLOCK]    UDP 443 -> 针对 Google/OpenAI 拦截。强制 TCP，防止 IPv6/QUIC 绕过。
     # 3. [PROXY]    Google全家桶/OpenAI -> US Proxy。包含 geosite:google，确保账号验证不走 HK IPv6。
+    # 4. [DNS 优化] 内置 DNS 缓存，减少首次访问延迟。
     
     # 检查是否存在 SS2022 服务器
     if check_ss2022_server && [[ -n "$SS_PORT" ]] && [[ -n "$SS_METHOD" ]] && [[ -n "$SS_PASS" ]]; then
@@ -682,6 +696,20 @@ setup_ai_routing_ss2022() {
         cat > "$XRAY_CONF" <<JSON
 {
   "log": { "loglevel": "warning" },
+  "dns": {
+    "servers": [
+      {
+        "address": "https://1.1.1.1/dns-query",
+        "domains": ["geosite:openai", "geosite:google", "geosite:bing"],
+        "expectIPs": ["geoip:us"]
+      },
+      "https://223.5.5.5/dns-query",
+      "localhost"
+    ],
+    "queryStrategy": "$DNS_STRATEGY",
+    "disableCache": false,
+    "disableFallback": true
+  },
   "inbounds": [
     {
       "listen": "0.0.0.0",
@@ -795,6 +823,20 @@ JSON
         cat > "$XRAY_CONF" <<JSON
 {
   "log": { "loglevel": "warning" },
+  "dns": {
+    "servers": [
+      {
+        "address": "https://1.1.1.1/dns-query",
+        "domains": ["geosite:openai", "geosite:google", "geosite:bing"],
+        "expectIPs": ["geoip:us"]
+      },
+      "https://223.5.5.5/dns-query",
+      "localhost"
+    ],
+    "queryStrategy": "$DNS_STRATEGY",
+    "disableCache": false,
+    "disableFallback": true
+  },
   "inbounds": [{
     "listen": "0.0.0.0",
     "port": $PORT,
