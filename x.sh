@@ -703,7 +703,6 @@ setup_ai_routing_ss2022() {
         "domains": ["geosite:openai", "geosite:google", "geosite:bing"],
         "expectIPs": ["geoip:us"]
       },
-      "https://223.5.5.5/dns-query",
       "localhost"
     ],
     "queryStrategy": "$DNS_STRATEGY",
@@ -830,7 +829,6 @@ JSON
         "domains": ["geosite:openai", "geosite:google", "geosite:bing"],
         "expectIPs": ["geoip:us"]
       },
-      "https://223.5.5.5/dns-query",
       "localhost"
     ],
     "queryStrategy": "$DNS_STRATEGY",
