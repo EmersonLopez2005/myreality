@@ -774,9 +774,7 @@ setup_ai_routing_ss2022() {
       },
       {
         "type": "field",
-        "outboundTag": "block",
-        "network": "udp",
-        "port": "443",
+        "outboundTag": "US_SS2022",
         "domain": [
           "geosite:openai",
           "geosite:google",
@@ -788,12 +786,18 @@ setup_ai_routing_ss2022() {
           "domain:bard.google.com",
           "domain:accounts.google.com",
           "domain:googleapis.com",
-          "domain:google.com"
+          "domain:google.com",
+          "regexp:ocsp\\.",
+          "regexp:\\.digicert\\.com$",
+          "regexp:\\.letsencrypt\\.org$",
+          "regexp:\\.amazontrust\\.com$"
         ]
       },
       {
         "type": "field",
-        "outboundTag": "US_SS2022",
+        "outboundTag": "block",
+        "network": "udp",
+        "port": "443",
         "domain": [
           "geosite:openai",
           "geosite:google",
@@ -888,9 +892,7 @@ JSON
       },
       {
         "type": "field",
-        "outboundTag": "block",
-        "network": "udp",
-        "port": "443",
+        "outboundTag": "US_SS2022",
         "domain": [
           "geosite:openai",
           "geosite:google",
@@ -902,12 +904,18 @@ JSON
           "domain:bard.google.com",
           "domain:accounts.google.com",
           "domain:googleapis.com",
-          "domain:google.com"
+          "domain:google.com",
+          "regexp:ocsp\\.",
+          "regexp:\\.digicert\\.com$",
+          "regexp:\\.letsencrypt\\.org$",
+          "regexp:\\.amazontrust\\.com$"
         ]
       },
       {
         "type": "field",
-        "outboundTag": "US_SS2022",
+        "outboundTag": "block",
+        "network": "udp",
+        "port": "443",
         "domain": [
           "geosite:openai",
           "geosite:google",
