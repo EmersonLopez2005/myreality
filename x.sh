@@ -55,7 +55,7 @@ uninstall_xray() {
     sed -i '/alias xray=/d' ~/.bashrc
     rm -f "$SCRIPT_PATH"
     
-    green "�?卸载完成�?
+    green "卸载完成！"
     exit 0
 }
 
