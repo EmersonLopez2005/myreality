@@ -17,34 +17,32 @@ green() { echo -e "\033[32m$1\033[0m"; }
 yellow() { echo -e "\033[33m$1\033[0m"; }
 blue() { echo -e "\033[36m$1\033[0m"; }
 
-# --- 自我更新与安装机制 ---
-# 确保脚本即使通过 curl 运行，也会把自己保存到本地
-install_self() {
+# --- 自我更新与安装机�?---
+# 确保脚本即使通过 curl 运行，也会把自己保存到本�?install_self() {
     if [[ ! -f "$SCRIPT_PATH" ]]; then
         curl -o "$SCRIPT_PATH" -Ls "https://raw.githubusercontent.com/EmersonLopez2005/myreality/main/x.sh"
         chmod +x "$SCRIPT_PATH"
     fi
-    # 修复快捷键
-    if ! grep -q "alias xray=" ~/.bashrc; then
+    # 修复快捷�?    if ! grep -q "alias xray=" ~/.bashrc; then
         echo "alias xray='bash $SCRIPT_PATH'" >> ~/.bashrc
         alias xray='bash $SCRIPT_PATH'
     fi
 }
 
 update_script() {
-    green "正在从 GitHub 拉取最新脚本..."
+    green "正在�?GitHub 拉取最新脚�?.."
     curl -o "$SCRIPT_PATH" -Ls "https://raw.githubusercontent.com/EmersonLopez2005/myreality/main/x.sh"
     chmod +x "$SCRIPT_PATH"
-    green "脚本已更新！请重新运行 xray"
+    green "脚本已更新！请重新运�?xray"
     exit 0
 }
 
 # --- 强力卸载 ---
 uninstall_xray() {
     echo ""
-    red "⚠️  警告：这将彻底删除 Xray 及其所有配置！"
-    read -p "确定要卸载吗？(y/n): " confirm
-    if [[ "$confirm" != "y" ]]; then echo "已取消"; return; fi
+    red "⚠️  警告：这将彻底删�?Xray 及其所有配置！"
+    read -p "确定要卸载吗�?y/n): " confirm
+    if [[ "$confirm" != "y" ]]; then echo "已取�?; return; fi
 
     systemctl stop xray >/dev/null 2>&1
     systemctl disable xray >/dev/null 2>&1
@@ -55,7 +53,7 @@ uninstall_xray() {
     sed -i '/alias xray=/d' ~/.bashrc
     rm -f "$SCRIPT_PATH"
     
-    green "✅ 卸载完成！"
+    green "�?卸载完成�?
     exit 0
 }
 
@@ -88,27 +86,27 @@ ask_config() {
     clear
     echo ""
     echo -e "\033[33m"
-    echo "██████╗ ███████╗ █████╗ ██╗     ██╗████████╗██╗   ██╗"
-    echo "██╔══██╗██╔════╝██╔══██╗██║     ██║╚══██╔══╝╚██╗ ██╔╝"
-    echo "██████╔╝█████╗  ███████║██║     ██║   ██║    ╚████╔╝ "
-    echo "██╔══██╗██╔══╝  ██╔══██║██║     ██║   ██║     ╚██╔╝  "
-    echo "██║  ██║███████╗██║  ██║███████╗██║   ██║      ██║   "
-    echo "╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝      ╚═╝   "
+    echo "██████�?███████╗ █████╗ ██�?    ██╗████████╗██�?  ██�?
+    echo "██╔══██╗██╔════╝██╔══██╗██�?    ██║╚══██╔══╝╚██╗ ██╔╝"
+    echo "██████╔╝█████╗  ███████║██�?    ██�?  ██�?   ╚████╔�?"
+    echo "██╔══██╗██╔══╝  ██╔══██║██�?    ██�?  ██�?    ╚██╔�? "
+    echo "██�? ██║███████╗██║  ██║███████╗██║   ██�?     ██�?  "
+    echo "╚═�? ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═�?     ╚═�?  "
     echo -e "\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo -e "\033[32m            Reality 极简安装脚本 v2.0\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo ""
     
-    read -p "$(yellow "请输入端口 [回车随机]: ") " input_port
+    read -p "$(yellow "请输入端�?[回车随机]: ") " input_port
     [[ -z "$input_port" ]] && PORT=$(shuf -i 10000-65535 -n 1) || PORT=$input_port
 
-    read -p "$(yellow "请输入伪装域名 [回车默认 learn.microsoft.com]: ") " input_sni
+    read -p "$(yellow "请输入伪装域�?[回车默认 learn.microsoft.com]: ") " input_sni
     [[ -z "$input_sni" ]] && TARGET_SNI="learn.microsoft.com" || TARGET_SNI=$input_sni
     
     echo ""
-    green "配置确认：端口 $PORT | SNI $TARGET_SNI"
-    read -p "按回车继续..."
+    green "配置确认：端�?$PORT | SNI $TARGET_SNI"
+    read -p "按回车继�?.."
 }
 
 install_core() {
@@ -166,9 +164,9 @@ setup_system() {
     systemctl restart xray
 }
 
-# --- 创建 SS2022 服务器 ---
+# --- 创建 SS2022 服务�?---
 create_ss2022_server() {
-    if [[ ! -f "$ENV_FILE" ]]; then red "未找到 Reality 配置，请先安装 Reality"; return; fi
+    if [[ ! -f "$ENV_FILE" ]]; then red "未找�?Reality 配置，请先安�?Reality"; return; fi
     source "$ENV_FILE"
     
     CURRENT_PK=$(grep -oP '"privateKey": "\K[^"]+' "$XRAY_CONF")
@@ -187,7 +185,7 @@ create_ss2022_server() {
         SS_METHOD=$(jq -r '.inbounds[] | select(.protocol=="shadowsocks") | .settings.method' "$XRAY_CONF")
         SS_PASS=$(jq -r '.inbounds[] | select(.protocol=="shadowsocks") | .settings.password' "$XRAY_CONF")
         
-        yellow "⚠️  检测到已存在 SS2022 服务器"
+        yellow "⚠️  检测到已存�?SS2022 服务�?
         echo -e "\033[33m端口:\033[0m $SS_PORT"
         echo -e "\033[33m加密:\033[0m $SS_METHOD"
         echo ""
@@ -196,7 +194,7 @@ create_ss2022_server() {
     fi
     
     # 输入配置
-    read -p "$(yellow "请输入 SS2022 端口 [回车随机]: ") " input_ss_port
+    read -p "$(yellow "请输�?SS2022 端口 [回车随机]: ") " input_ss_port
     [[ -z "$input_ss_port" ]] && SS_PORT=$(shuf -i 10000-65535 -n 1) || SS_PORT=$input_ss_port
     
     echo ""
@@ -216,19 +214,18 @@ create_ss2022_server() {
     fi
     
     echo ""
-    green "配置确认："
+    green "配置确认�?
     echo -e "\033[33m端口:\033[0m $SS_PORT"
     echo -e "\033[33m加密:\033[0m $SS_METHOD"
     echo -e "\033[33m密钥:\033[0m $SS_PASS"
     echo ""
-    read -p "按回车继续..."
+    read -p "按回车继�?.."
     
-    # 检查是否存在分流配置
-    get_ss_status
+    # 检查是否存在分流配�?    get_ss_status
     
     # 生成配置（Reality + SS2022，保留分流）
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
-        # 有分流配置，读取现有的外部 SS2022 配置
+        # 有分流配置，读取现有的外�?SS2022 配置
         US_ADDR=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].address' "$XRAY_CONF")
         US_PORT=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].port' "$XRAY_CONF")
         US_METHOD=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].method' "$XRAY_CONF")
@@ -346,8 +343,7 @@ create_ss2022_server() {
 }
 JSON
     else
-        # 没有分流，只有 Reality + SS2022 服务器
-        cat > "$XRAY_CONF" <<JSON
+        # 没有分流，只�?Reality + SS2022 服务�?        cat > "$XRAY_CONF" <<JSON
 {
   "log": { "loglevel": "warning" },
   "inbounds": [
@@ -388,8 +384,7 @@ JSON
 JSON
     fi
     
-    # 保存 SS2022 信息到 ENV（先删除旧的，再写入新的）
-    sed -i '/^SS_PORT=/d' "$ENV_FILE"
+    # 保存 SS2022 信息�?ENV（先删除旧的，再写入新的�?    sed -i '/^SS_PORT=/d' "$ENV_FILE"
     sed -i '/^SS_METHOD=/d' "$ENV_FILE"
     sed -i '/^SS_PASS=/d' "$ENV_FILE"
     cat >> "$ENV_FILE" <<ENV
@@ -402,19 +397,19 @@ ENV
     
     if systemctl is-active --quiet xray; then
         echo ""
-        green "✅ SS2022 服务器创建成功！"
+        green "�?SS2022 服务器创建成功！"
         echo ""
         show_ss2022_info
     else
         echo ""
-        red "❌ 启动失败，请检查配置！"
+        red "�?启动失败，请检查配置！"
     fi
 }
 
 # --- 显示 SS2022 信息 ---
 show_ss2022_info() {
     if ! check_ss2022_server; then
-        red "未创建 SS2022 服务器"
+        red "未创�?SS2022 服务�?
         return
     fi
     
@@ -441,35 +436,35 @@ show_ss2022_info() {
     echo ""
 }
 
-# --- 删除 SS2022 服务器 ---
+# --- 删除 SS2022 服务�?---
 remove_ss2022_server() {
     if ! check_ss2022_server; then
-        yellow "未检测到 SS2022 服务器"
+        yellow "未检测到 SS2022 服务�?
         return
     fi
     
-    if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
+    if [[ ! -f "$ENV_FILE" ]]; then red "未找到配�?; return; fi
     source "$ENV_FILE"
     
     clear
     echo ""
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\033[31m           🗑️  删除 SS2022 服务器\033[0m"
+    echo -e "\033[31m           🗑�? 删除 SS2022 服务器\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo ""
-    red "⚠️  警告：这将删除 SS2022 服务器配置"
+    red "⚠️  警告：这将删�?SS2022 服务器配�?
     echo -e "\033[33m端口:\033[0m $SS_PORT"
     echo ""
     get_ss_status
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
-        green "✓ 分流配置将被保留"
+        green "�?分流配置将被保留"
     else
-        yellow "注意：当前没有分流配置"
+        yellow "注意：当前没有分流配�?
     fi
     echo ""
-    read -p "确定要删除 SS2022 服务器吗？(y/n): " confirm
+    read -p "确定要删�?SS2022 服务器吗�?y/n): " confirm
     if [[ "$confirm" != "y" ]]; then 
-        echo "已取消"
+        echo "已取�?
         return
     fi
     
@@ -623,19 +618,19 @@ JSON
     
     if systemctl is-active --quiet xray; then
         echo ""
-        green "✅ SS2022 服务器已删除！"
+        green "�?SS2022 服务器已删除�?
         if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
-            green "✓ 分流配置已保留"
+            green "�?分流配置已保�?
         fi
     else
         echo ""
-        red "❌ 重启失败！"
+        red "�?重启失败�?
     fi
 }
 
-# --- 核心：智能分流 (修复 IPv6 泄露) ---
+# --- 核心：智能分�?(修复 IPv6 泄露) ---
 setup_ai_routing_ss2022() {
-    if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
+    if [[ ! -f "$ENV_FILE" ]]; then red "未找到配�?; return; fi
     source "$ENV_FILE"
     
     CURRENT_PK=$(grep -oP '"privateKey": "\K[^"]+' "$XRAY_CONF")
@@ -672,8 +667,8 @@ setup_ai_routing_ss2022() {
     echo ""
     echo "请选择 DNS 查询策略:"
     echo "1) IPv4 优先 (默认，稳定性好)"
-    echo "2) IPv6 优先 (US VPS 有 IPv6 优势时选择)"
-    echo "3) 同时查询 IPv4 和 IPv6"
+    echo "2) IPv6 优先 (US VPS �?IPv6 优势时选择)"
+    echo "3) 同时查询 IPv4 �?IPv6"
     read -p "选择 [1-3]: " dns_choice
     case "$dns_choice" in
         2) DNS_STRATEGY="UseIPv6" ;;
@@ -685,15 +680,9 @@ setup_ai_routing_ss2022() {
     green "DNS 策略: $DNS_STRATEGY"
     
     # 策略解释 :
-    # 1. [PRIORITY] YouTube -> 直连 (HK)。
-    # 2. [BLOCK]    UDP 443 -> 针对 Google/OpenAI 拦截。强制 TCP，防止 IPv6/QUIC 绕过。
-    # 3. [PROXY]    Google全家桶/OpenAI -> US Proxy。包含 geosite:google，确保账号验证不走 HK IPv6。
-    # 4. [DNS 优化] 内置 DNS 缓存，减少首次访问延迟。
-    
-    # 检查是否存在 SS2022 服务器
-    if check_ss2022_server && [[ -n "$SS_PORT" ]] && [[ -n "$SS_METHOD" ]] && [[ -n "$SS_PASS" ]]; then
-        # 保留 SS2022 服务器配置
-        cat > "$XRAY_CONF" <<JSON
+    # 1. [PRIORITY] YouTube -> 直连 (HK)�?    # 2. [BLOCK]    UDP 443 -> 针对 Google/OpenAI 拦截。强�?TCP，防�?IPv6/QUIC 绕过�?    # 3. [PROXY]    Google全家�?OpenAI -> US Proxy。包�?geosite:google，确保账号验证不�?HK IPv6�?    # 4. [DNS 优化] 内置 DNS 缓存，减少首次访问延迟�?    
+    # 检查是否存�?SS2022 服务�?    if check_ss2022_server && [[ -n "$SS_PORT" ]] && [[ -n "$SS_METHOD" ]] && [[ -n "$SS_PASS" ]]; then
+        # 保留 SS2022 服务器配�?        cat > "$XRAY_CONF" <<JSON
 {
   "log": { "loglevel": "warning" },
   "dns": {
@@ -787,10 +776,10 @@ setup_ai_routing_ss2022() {
           "domain:accounts.google.com",
           "domain:googleapis.com",
           "domain:google.com",
-          "regexp:ocsp\\.",
-          "regexp:\\.digicert\\.com$",
-          "regexp:\\.letsencrypt\\.org$",
-          "regexp:\\.amazontrust\\.com$"
+          "regexp:ocsp.",
+          "regexp:.digicert.com\$",
+          "regexp:.letsencrypt.org\$",
+          "regexp:.amazontrust.com\$"
         ]
       },
       {
@@ -905,10 +894,10 @@ JSON
           "domain:accounts.google.com",
           "domain:googleapis.com",
           "domain:google.com",
-          "regexp:ocsp\\.",
-          "regexp:\\.digicert\\.com$",
-          "regexp:\\.letsencrypt\\.org$",
-          "regexp:\\.amazontrust\\.com$"
+          "regexp:ocsp.",
+          "regexp:.digicert.com\$",
+          "regexp:.letsencrypt.org\$",
+          "regexp:.amazontrust.com\$"
         ]
       },
       {
@@ -943,21 +932,21 @@ JSON
     systemctl restart xray
     if systemctl is-active --quiet xray; then
         echo ""
-        green "✅ 分流配置成功！"
+        green "�?分流配置成功�?
     else
         echo ""
-        red "❌ 启动失败，请检查端口/密钥！"
+        red "�?启动失败，请检查端�?密钥�?
     fi
 }
 
-# --- 关闭分流（保留 SS2022 服务器）---
+# --- 关闭分流（保�?SS2022 服务器）---
 disable_routing() {
-    if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
+    if [[ ! -f "$ENV_FILE" ]]; then red "未找到配�?; return; fi
     source "$ENV_FILE"
     
     get_ss_status
     if [[ -z "$SS_IP" || "$SS_IP" == "null" ]]; then
-        yellow "分流已经是关闭状态"
+        yellow "分流已经是关闭状�?
         return
     fi
     
@@ -967,21 +956,19 @@ disable_routing() {
     clear
     echo ""
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\033[33m           ❌ 关闭分流功能\033[0m"
+    echo -e "\033[33m           �?关闭分流功能\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo ""
-    yellow "将关闭分流，所有流量恢复直连"
+    yellow "将关闭分流，所有流量恢复直�?
     if check_ss2022_server && [[ -n "$SS_PORT" ]]; then
-        green "✓ 将保留 SS2022 服务器配置"
+        green "�?将保�?SS2022 服务器配�?
     fi
     echo ""
     read -p "确认关闭? (y/n) [n]: " confirm
     [[ "$confirm" != "y" ]] && return
     
-    # 检查是否有 SS2022 服务器
-    if check_ss2022_server && [[ -n "$SS_PORT" ]] && [[ -n "$SS_METHOD" ]] && [[ -n "$SS_PASS" ]]; then
-        # 保留 SS2022 服务器
-        cat > "$XRAY_CONF" <<JSON
+    # 检查是否有 SS2022 服务�?    if check_ss2022_server && [[ -n "$SS_PORT" ]] && [[ -n "$SS_METHOD" ]] && [[ -n "$SS_PASS" ]]; then
+        # 保留 SS2022 服务�?        cat > "$XRAY_CONF" <<JSON
 {
   "log": { "loglevel": "warning" },
   "inbounds": [
@@ -1054,15 +1041,15 @@ JSON
     systemctl restart xray
     if systemctl is-active --quiet xray; then
         echo ""
-        green "✅ 分流已关闭，流量恢复直连！"
+        green "�?分流已关闭，流量恢复直连�?
     else
         echo ""
-        red "❌ 重启失败！"
+        red "�?重启失败�?
     fi
 }
 
 show_info() {
-    if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
+    if [[ ! -f "$ENV_FILE" ]]; then red "未找到配�?; return; fi
     source "$ENV_FILE"
     get_ss_status
     CURRENT_IP=$(curl -s -4 https://api.ipify.org)
@@ -1087,11 +1074,11 @@ show_info() {
     
     echo -e "\033[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
-        echo -e "\033[33m分流状态 (Route):\033[0m    \033[32m✅ 已启用 (SS2022)\033[0m"
+        echo -e "\033[33m分流状�?(Route):\033[0m    \033[32m�?已启�?(SS2022)\033[0m"
         echo -e "\033[33mGemini/GPT (Target):\033[0m $SS_IP"
         echo -e "\033[33mYouTube (Target):\033[0m    本地直连"
     else
-        echo -e "\033[33m分流状态 (Route):\033[0m    \033[31m❌ 未启用 (全部直连)\033[0m"
+        echo -e "\033[33m分流状�?(Route):\033[0m    \033[31m�?未启�?(全部直连)\033[0m"
     fi
     echo -e "\033[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     
@@ -1121,12 +1108,12 @@ menu() {
     
     echo ""
     echo -e "\033[33m"
-    echo "██████╗ ███████╗ █████╗ ██╗     ██╗████████╗██╗   ██╗"
-    echo "██╔══██╗██╔════╝██╔══██╗██║     ██║╚══██╔══╝╚██╗ ██╔╝"
-    echo "██████╔╝█████╗  ███████║██║     ██║   ██║    ╚████╔╝ "
-    echo "██╔══██╗██╔══╝  ██╔══██║██║     ██║   ██║     ╚██╔╝  "
-    echo "██║  ██║███████╗██║  ██║███████╗██║   ██║      ██║   "
-    echo "╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝      ╚═╝   "
+    echo "██████�?███████╗ █████╗ ██�?    ██╗████████╗██�?  ██�?
+    echo "██╔══██╗██╔════╝██╔══██╗██�?    ██║╚══██╔══╝╚██╗ ██╔╝"
+    echo "██████╔╝█████╗  ███████║██�?    ██�?  ██�?   ╚████╔�?"
+    echo "██╔══██╗██╔══╝  ██╔══██║██�?    ██�?  ██�?    ╚██╔�? "
+    echo "██�? ██║███████╗██║  ██║███████╗██║   ██�?     ██�?  "
+    echo "╚═�? ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═�?     ╚═�?  "
     echo -e "\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo -e "\033[32m              Reality 管理面板 v2.0\033[0m"
@@ -1134,26 +1121,26 @@ menu() {
     echo ""
     echo -e "\033[36m  [1]\033[0m 查看 Reality 节点"
     echo -e "\033[36m  [2]\033[0m 更新内核"
-    echo -e "\033[36m  [3]\033[0m 初始化/重置 Reality"
+    echo -e "\033[36m  [3]\033[0m 初始�?重置 Reality"
     echo -e "\033[36m  [4]\033[0m 重启服务"
     echo -e "\033[36m  [5]\033[0m 彻底卸载 (Uninstall & Clean)"
     echo -e "\033[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\033[36m  [6]\033[0m 开启分流 (Gemini+GPT -> US) $AI_STATUS"
+    echo -e "\033[36m  [6]\033[0m 开启分�?(Gemini+GPT -> US) $AI_STATUS"
     echo -e "\033[36m  [a]\033[0m 关闭分流 (恢复直连)"
     echo -e "\033[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\033[36m  [8]\033[0m 创建 SS2022 服务器 $SS_SERVER_STATUS"
+    echo -e "\033[36m  [8]\033[0m 创建 SS2022 服务�?$SS_SERVER_STATUS"
     echo -e "\033[36m  [9]\033[0m 查看 SS2022 信息"
-    echo -e "\033[36m  [d]\033[0m 删除 SS2022 服务器"
+    echo -e "\033[36m  [d]\033[0m 删除 SS2022 服务�?
     echo -e "\033[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo -e "\033[36m  [7]\033[0m 更新脚本 (Update Script)"
-    echo -e "\033[36m  [0]\033[0m 退出"
+    echo -e "\033[36m  [0]\033[0m 退�?
     echo ""
     read -p "$(echo -e '\033[33m请选择:\033[0m ') " num
     case "$num" in
         1) show_info ;;
         2) install_core; systemctl restart xray ;;
         3) ask_config; install_core; generate_config; setup_system; show_info ;;
-        4) systemctl restart xray; green "已重启" ;;
+        4) systemctl restart xray; green "已重�? ;;
         5) uninstall_xray ;;
         6) setup_ai_routing_ss2022 ;;
         a|A) disable_routing ;;
