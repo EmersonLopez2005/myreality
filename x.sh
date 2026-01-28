@@ -161,7 +161,9 @@ get_inbound_config() {
             "settings": {
                 "method": "'$SS_METHOD'",
                 "password": "'$SS_PASS'",
-                "network": "tcp,udp"
+                "network": "tcp,udp",
+                "ipLimit": 128,
+                "clientIpLimit": 10
             },
             "sniffing": {
                 "enabled": true,
