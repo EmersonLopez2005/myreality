@@ -81,27 +81,6 @@ install_jq() {
     fi
 }
 
-# --- 新增：内存优化函数 ---
-optimize_memory() {
-    # 自动寻找 xray 的服务文件路径
-    local service_file=""
-    if [[ -f "/etc/systemd/system/xray.service" ]]; then
-        service_file="/etc/systemd/system/xray.service"
-    elif [[ -f "/lib/systemd/system/xray.service" ]]; then
-        service_file="/lib/systemd/system/xray.service"
-    fi
-
-    # 如果找到了文件，且里面没有设置过 GOGC，就插入优化参数
-    if [[ -n "$service_file" ]]; then
-        if ! grep -q "GOGC=30" "$service_file"; then
-            # 在 [Service] 这一行下面插入环境变量
-            sed -i '/^\[Service\]/a Environment="GOGC=30"' "$service_file"
-            systemctl daemon-reload
-            green "✅ 已自动应用内存优化 (GOGC=30)"
-        fi
-    fi
-}
-
 # --- 1. 基础安装 ---
 ask_config() {
     clear
@@ -249,8 +228,6 @@ ENV
 }
 
 setup_system() {
-    green ">>> 配置系统服务..."
-    optimize_memory  # <--- 这里调用刚才添加的优化函数
     systemctl enable xray >/dev/null 2>&1
     systemctl restart xray
 }
