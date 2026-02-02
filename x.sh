@@ -185,7 +185,7 @@ generate_config() {
 
     cat > "$XRAY_CONF" <<JSON
 {
-  "log": { "loglevel": "warning" },
+  "log": { "access": "none", "loglevel": "warning" },
   "inbounds": [
     {
       "listen": "0.0.0.0",
@@ -292,7 +292,7 @@ create_ss2022_server() {
         
         cat > "$XRAY_CONF" <<JSON
 {
-  "log": { "loglevel": "warning" },
+  "log": { "access": "none", "loglevel": "warning" },
   "inbounds": [ $INBOUND_REALITY, $INBOUND_SS ],
   "outbounds": [
     { "protocol": "freedom", "tag": "direct" },
@@ -326,7 +326,7 @@ JSON
     else
         cat > "$XRAY_CONF" <<JSON
 {
-  "log": { "loglevel": "warning" },
+  "log": { "access": "none", "loglevel": "warning" },
   "inbounds": [ $INBOUND_REALITY, $INBOUND_SS ],
   "outbounds": [{ "protocol": "freedom", "tag": "direct" }]
 }
@@ -387,7 +387,7 @@ remove_ss2022_server() {
 
         cat > "$XRAY_CONF" <<JSON
 {
-  "log": { "loglevel": "warning" },
+  "log": { "access": "none", "loglevel": "warning" },
   "inbounds": [ $INBOUND_REALITY ],
   "outbounds": [
     { "protocol": "freedom", "tag": "direct" },
@@ -420,7 +420,7 @@ JSON
     else
         cat > "$XRAY_CONF" <<JSON
 {
-  "log": { "loglevel": "warning" },
+  "log": { "access": "none", "loglevel": "warning" },
   "inbounds": [ $INBOUND_REALITY ],
   "outbounds": [{ "protocol": "freedom", "tag": "direct" }]
 }
@@ -487,7 +487,7 @@ setup_ai_routing_ss2022() {
 
     cat > "$XRAY_CONF" <<JSON
 {
-  "log": { "loglevel": "warning" },
+  "log": { "access": "none", "loglevel": "warning" },
   "dns": {
     "servers": [
       { "address": "https://1.1.1.1/dns-query", "domains": ["geosite:openai","geosite:google","geosite:bing"], "expectIPs": ["geoip:us"] },
@@ -597,7 +597,7 @@ disable_routing() {
     
     cat > "$XRAY_CONF" <<JSON
 {
-  "log": { "loglevel": "warning" },
+  "log": { "access": "none", "loglevel": "warning" },
   "inbounds": $INBOUNDS_BLOCK,
   "outbounds": [{ "protocol": "freedom", "tag": "direct" }]
 }
