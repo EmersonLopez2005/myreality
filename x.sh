@@ -2,7 +2,7 @@
 set -u
 
 # ==================================================
-# Reality 管理脚本 v2.8
+# Reality 管理脚本 v2.9 (Hybrid/混合模式版)
 # ==================================================
 
 # --- 全局变量 ---
@@ -94,7 +94,7 @@ ask_config() {
     echo "╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝      ╚═╝  "
     echo -e "\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\033[32m            Reality 极简安装脚本 v2.8\033[0m"
+    echo -e "\033[32m            Reality 极简安装脚本 v2.9\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo ""
     
@@ -288,11 +288,15 @@ create_ss2022_server() {
         US_METHOD=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].method' "$XRAY_CONF")
         US_PASS=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].password' "$XRAY_CONF")
         
-        # 恢复旧的 YouTube 模式
-        if grep -q "YOUTUBE_MODE=proxy" "$ENV_FILE"; then
-            YT_TAG="US_SS2022"
+        # 恢复 YouTube 模式 (包含混合模式逻辑)
+        YT_RULES=""
+        CUR_MODE="${YOUTUBE_MODE:-direct}"
+        if [[ "$CUR_MODE" == "proxy" ]]; then
+             YT_RULES='{ "type": "field", "outboundTag": "US_SS2022", "domain": ["geosite:youtube","domain:googlevideo.com"] },'
+        elif [[ "$CUR_MODE" == "hybrid" ]]; then
+             YT_RULES='{ "type": "field", "outboundTag": "direct", "domain": ["domain:googlevideo.com","domain:ggpht.com"] }, { "type": "field", "outboundTag": "US_SS2022", "domain": ["geosite:youtube"] },'
         else
-            YT_TAG="direct"
+             YT_RULES='{ "type": "field", "outboundTag": "direct", "domain": ["geosite:youtube","domain:googlevideo.com"] },'
         fi
         
         cat > "$XRAY_CONF" <<JSON
@@ -320,7 +324,7 @@ create_ss2022_server() {
     "domainStrategy": "IPIfNonMatch",
     "rules": [
       { "type": "field", "inboundTag": ["ss-in"], "outboundTag": "direct" },
-      { "type": "field", "outboundTag": "$YT_TAG", "domain": ["geosite:youtube","domain:googlevideo.com","domain:youtube.com","domain:ytimg.com","domain:ggpht.com"] },
+      $YT_RULES
       { "type": "field", "outboundTag": "US_SS2022", "domain": ["geosite:openai","geosite:google","geosite:bing","domain:ai.com","regexp:ocsp."] },
       { "type": "field", "outboundTag": "block", "network": "udp", "port": "443", "domain": ["geosite:openai","geosite:bing"] },
       { "type": "field", "outboundTag": "direct", "network": "udp,tcp" }
@@ -390,8 +394,8 @@ remove_ss2022_server() {
         US_METHOD=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].method' "$XRAY_CONF")
         US_PASS=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].password' "$XRAY_CONF")
 
-        # 检查当前 YouTube 模式
-        if grep -q "YOUTUBE_MODE=proxy" "$ENV_FILE"; then YT_TAG="US_SS2022"; else YT_TAG="direct"; fi
+        # 检查当前 YouTube 模式，但既然删除了 SS2022，强制回退或仅保留直连
+        YT_RULES='{ "type": "field", "outboundTag": "direct", "domain": ["geosite:youtube","domain:googlevideo.com"] },'
 
         cat > "$XRAY_CONF" <<JSON
 {
@@ -417,7 +421,7 @@ remove_ss2022_server() {
   "routing": {
     "domainStrategy": "IPIfNonMatch",
     "rules": [
-      { "type": "field", "outboundTag": "$YT_TAG", "domain": ["geosite:youtube","domain:googlevideo.com"] },
+      $YT_RULES
       { "type": "field", "outboundTag": "US_SS2022", "domain": ["geosite:openai","geosite:google","geosite:bing","regexp:ocsp."] },
       { "type": "field", "outboundTag": "block", "network": "udp", "port": "443", "domain": ["geosite:openai"] },
       { "type": "field", "outboundTag": "direct", "network": "udp,tcp" }
@@ -461,7 +465,7 @@ setup_ai_routing_ss2022() {
         us_port=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].port' "$XRAY_CONF")
         us_method=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].method' "$XRAY_CONF")
         us_pass=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].password' "$XRAY_CONF")
-        DNS_STRATEGY="UseIPv4" # 刷新时默认回退IPv4，或可从配置读取（稍微复杂点，这里简化）
+        DNS_STRATEGY="UseIPv4"
     else
         # 正常交互模式
         clear
@@ -480,18 +484,13 @@ setup_ai_routing_ss2022() {
         read -p "$(yellow "3. SS2022 密钥: ") " us_pass
         [[ -z "$us_pass" ]] && return
         
-        echo ""
-        echo "请选择 SS2022 加密方式:"
-        echo "1) 2022-blake3-aes-128-gcm (推荐/默认)"
-        echo "2) 2022-blake3-aes-256-gcm"
+        echo ""; echo "请选择 SS2022 加密方式:"
+        echo "1) 2022-blake3-aes-128-gcm (推荐/默认)"; echo "2) 2022-blake3-aes-256-gcm"
         read -p "选择 [1-2]: " m
         [[ "$m" == "2" ]] && us_method="2022-blake3-aes-256-gcm" || us_method="2022-blake3-aes-128-gcm"
         
-        echo ""
-        echo "请选择 DNS 查询策略:"
-        echo "1) IPv4 优先 (默认)"
-        echo "2) IPv6 优先"
-        echo "3) 同时查询"
+        echo ""; echo "请选择 DNS 查询策略:"
+        echo "1) IPv4 优先 (默认)"; echo "2) IPv6 优先"; echo "3) 同时查询"
         read -p "选择 [1-3]: " dns_choice
         case "$dns_choice" in
             2) DNS_STRATEGY="UseIPv6" ;;
@@ -500,18 +499,27 @@ setup_ai_routing_ss2022() {
         esac
     fi
 
-    # 确定 YouTube 路由标签
+    # === 构建 YouTube 规则 (混合模式核心) ===
+    YT_RULES=""
     if [[ "$YOUTUBE_MODE" == "proxy" ]]; then
-        YT_TAG="US_SS2022"
-        YT_INFO="代理 (US_SS2022)"
+        # 全代理模式：所有 YouTube 相关域名都走 US
+        YT_INFO="全代理 (US)"
+        YT_RULES='{ "type": "field", "outboundTag": "US_SS2022", "domain": ["geosite:youtube","domain:googlevideo.com"] },'
+        
+    elif [[ "$YOUTUBE_MODE" == "hybrid" ]]; then
+        # 混合模式：视频流直连，其他走 US (注意顺序：先匹配视频流)
+        YT_INFO="混合 (界面US + 视频直连)"
+        YT_RULES='
+        { "type": "field", "outboundTag": "direct", "domain": ["domain:googlevideo.com", "domain:ggpht.com"] },
+        { "type": "field", "outboundTag": "US_SS2022", "domain": ["geosite:youtube"] },'
+        
     else
-        YT_TAG="direct"
+        # 直连模式
         YT_INFO="直连"
+        YT_RULES='{ "type": "field", "outboundTag": "direct", "domain": ["geosite:youtube","domain:googlevideo.com"] },'
     fi
 
-    if [[ "$mode" != "refresh" ]]; then
-        green "写入规则: Sniffing(防泄露) + KeepAlive(保活) + UDP/QUIC(加速)"
-    fi
+    if [[ "$mode" != "refresh" ]]; then green "正在写入规则..."; fi
     
     INBOUND_REALITY=$(get_inbound_config "reality-in" $PORT "vless")
     
@@ -563,17 +571,7 @@ setup_ai_routing_ss2022() {
     "domainStrategy": "IPIfNonMatch",
     "rules": [
       $SS_RULE
-      {
-        "type": "field",
-        "outboundTag": "$YT_TAG",
-        "domain": [
-          "geosite:youtube",
-          "domain:googlevideo.com",
-          "domain:youtube.com",
-          "domain:ytimg.com",
-          "domain:ggpht.com"
-        ]
-      },
+      $YT_RULES
       {
         "type": "field",
         "outboundTag": "US_SS2022",
@@ -595,20 +593,8 @@ setup_ai_routing_ss2022() {
           "regexp:.amazontrust.com\$"
         ]
       },
-      {
-        "type": "field",
-        "outboundTag": "block",
-        "network": "udp",
-        "port": "443",
-        "domain": [
-          "geosite:openai"
-        ]
-      },
-      {
-        "type": "field",
-        "outboundTag": "direct",
-        "network": "udp,tcp"
-      }
+      { "type": "field", "outboundTag": "block", "network": "udp", "port": "443", "domain": ["geosite:openai"] },
+      { "type": "field", "outboundTag": "direct", "network": "udp,tcp" }
     ]
   }
 }
@@ -640,18 +626,28 @@ toggle_youtube() {
         return
     fi
 
-    # 切换状态
-    if [[ "${YOUTUBE_MODE:-direct}" == "proxy" ]]; then
-        sed -i '/^YOUTUBE_MODE=/d' "$ENV_FILE"
-        echo "YOUTUBE_MODE=direct" >> "$ENV_FILE"
-        export YOUTUBE_MODE="direct"
-        green "🔄 正在切换: YouTube -> 直连..."
-    else
-        sed -i '/^YOUTUBE_MODE=/d' "$ENV_FILE"
-        echo "YOUTUBE_MODE=proxy" >> "$ENV_FILE"
-        export YOUTUBE_MODE="proxy"
-        green "🔄 正在切换: YouTube -> 代理 (US_SS2022)..."
-    fi
+    # 循环切换状态: direct -> proxy -> hybrid -> direct
+    case "${YOUTUBE_MODE:-direct}" in
+        "direct")
+            NEW_MODE="proxy"
+            MSG="全代理 (US_SS2022)"
+            ;;
+        "proxy")
+            NEW_MODE="hybrid"
+            MSG="混合模式 (界面US + 视频直连)"
+            ;;
+        *)
+            NEW_MODE="direct"
+            MSG="直连"
+            ;;
+    esac
+
+    sed -i '/^YOUTUBE_MODE=/d' "$ENV_FILE"
+    echo "YOUTUBE_MODE=$NEW_MODE" >> "$ENV_FILE"
+    export YOUTUBE_MODE="$NEW_MODE"
+    
+    echo ""
+    green "🔄 正在切换: YouTube -> $MSG..."
 
     # 刷新配置
     setup_ai_routing_ss2022 "refresh"
@@ -740,11 +736,11 @@ menu() {
     fi
 
     # YouTube 状态显示
-    if [[ "${YOUTUBE_MODE:-direct}" == "proxy" ]]; then
-        YT_STATUS="[\033[32m代理\033[0m]"
-    else
-        YT_STATUS="[\033[33m直连\033[0m]"
-    fi
+    case "${YOUTUBE_MODE:-direct}" in
+        "proxy")  YT_STATUS="[\033[32m代理\033[0m]" ;;
+        "hybrid") YT_STATUS="[\033[36m混合\033[0m]" ;;
+        *)        YT_STATUS="[\033[33m直连\033[0m]" ;;
+    esac
     
     echo ""
     echo -e "\033[33m"
@@ -756,9 +752,8 @@ menu() {
     echo "╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝      ╚═╝  "
     echo -e "\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\033[32m              Reality 管理面板 v2.8\033[0m"
+    echo -e "\033[32m           Reality 管理面板 v2.9 (混合版)\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo ""
     echo -e "\033[36m  [1]\033[0m 查看 Reality 节点"
     echo -e "\033[36m  [2]\033[0m 更新内核"
     echo -e "\033[36m  [3]\033[0m 初始化/重置 Reality"
