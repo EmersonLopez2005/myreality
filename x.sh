@@ -2,7 +2,7 @@
 set -u
 
 # ==================================================
-# Reality 管理脚本 v2.7
+# Reality 管理脚本 v2.8
 # ==================================================
 
 # --- 全局变量 ---
@@ -94,7 +94,7 @@ ask_config() {
     echo "╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝      ╚═╝  "
     echo -e "\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\033[32m            Reality 极简安装脚本 v2.7\033[0m"
+    echo -e "\033[32m            Reality 极简安装脚本 v2.8\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo ""
     
@@ -115,13 +115,10 @@ install_core() {
 }
 
 # --- 核心：配置生成 ---
-# 修复了变量名 BUG: ${TARGET_SNI} -> ${SNI}
 get_inbound_config() {
     local tag=$1
     local port=$2
     local protocol=$3
-    
-    # 确保 SNI 变量存在，如果不存在则使用默认值
     local USE_SNI="${SNI:-learn.microsoft.com}"
 
     if [[ "$protocol" == "vless" ]]; then
@@ -223,6 +220,7 @@ PORT=$PORT
 SNI=$TARGET_SNI
 PBK=$PUB
 SID=$SHORT_ID
+YOUTUBE_MODE=direct
 ENV
     chmod 600 "$ENV_FILE"
 }
@@ -290,6 +288,13 @@ create_ss2022_server() {
         US_METHOD=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].method' "$XRAY_CONF")
         US_PASS=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].password' "$XRAY_CONF")
         
+        # 恢复旧的 YouTube 模式
+        if grep -q "YOUTUBE_MODE=proxy" "$ENV_FILE"; then
+            YT_TAG="US_SS2022"
+        else
+            YT_TAG="direct"
+        fi
+        
         cat > "$XRAY_CONF" <<JSON
 {
   "log": { "access": "none", "loglevel": "warning" },
@@ -315,7 +320,7 @@ create_ss2022_server() {
     "domainStrategy": "IPIfNonMatch",
     "rules": [
       { "type": "field", "inboundTag": ["ss-in"], "outboundTag": "direct" },
-      { "type": "field", "outboundTag": "direct", "domain": ["geosite:youtube","domain:googlevideo.com","domain:youtube.com"] },
+      { "type": "field", "outboundTag": "$YT_TAG", "domain": ["geosite:youtube","domain:googlevideo.com","domain:youtube.com","domain:ytimg.com","domain:ggpht.com"] },
       { "type": "field", "outboundTag": "US_SS2022", "domain": ["geosite:openai","geosite:google","geosite:bing","domain:ai.com","regexp:ocsp."] },
       { "type": "field", "outboundTag": "block", "network": "udp", "port": "443", "domain": ["geosite:openai","geosite:bing"] },
       { "type": "field", "outboundTag": "direct", "network": "udp,tcp" }
@@ -385,6 +390,9 @@ remove_ss2022_server() {
         US_METHOD=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].method' "$XRAY_CONF")
         US_PASS=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].password' "$XRAY_CONF")
 
+        # 检查当前 YouTube 模式
+        if grep -q "YOUTUBE_MODE=proxy" "$ENV_FILE"; then YT_TAG="US_SS2022"; else YT_TAG="direct"; fi
+
         cat > "$XRAY_CONF" <<JSON
 {
   "log": { "access": "none", "loglevel": "warning" },
@@ -409,7 +417,7 @@ remove_ss2022_server() {
   "routing": {
     "domainStrategy": "IPIfNonMatch",
     "rules": [
-      { "type": "field", "outboundTag": "direct", "domain": ["geosite:youtube","domain:googlevideo.com"] },
+      { "type": "field", "outboundTag": "$YT_TAG", "domain": ["geosite:youtube","domain:googlevideo.com"] },
       { "type": "field", "outboundTag": "US_SS2022", "domain": ["geosite:openai","geosite:google","geosite:bing","regexp:ocsp."] },
       { "type": "field", "outboundTag": "block", "network": "udp", "port": "443", "domain": ["geosite:openai"] },
       { "type": "field", "outboundTag": "direct", "network": "udp,tcp" }
@@ -432,47 +440,78 @@ JSON
 }
 
 setup_ai_routing_ss2022() {
+    local mode="${1:-normal}" # 接受参数：normal(默认) 或 refresh(刷新)
+    
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
     source "$ENV_FILE"
-    CURRENT_PK=$(grep -oP '"privateKey": "\K[^"]+' "$XRAY_CONF")
-
-    get_ss_status
-    clear
-    echo ""; echo -e "\033[33m       🌐 配置分流 (Gemini + ChatGPT -> US)\033[0m"; echo ""
     
-    if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
-        green "当前 US 目标: $SS_IP"
-        read -p "是否修改? (y/n) [n]: " modify
-        [[ "$modify" != "y" ]] && return
+    # 默认 YouTube 模式
+    if [[ -z "${YOUTUBE_MODE:-}" ]]; then
+        echo "YOUTUBE_MODE=direct" >> "$ENV_FILE"
+        YOUTUBE_MODE="direct"
     fi
-    
-    read -p "$(yellow "1. US IP地址: ") " us_addr
-    [[ -z "$us_addr" ]] && return
-    read -p "$(yellow "2. US 端口: ") " us_port
-    [[ -z "$us_port" ]] && return
-    read -p "$(yellow "3. SS2022 密钥: ") " us_pass
-    [[ -z "$us_pass" ]] && return
-    
-    echo ""
-    echo "请选择 SS2022 加密方式:"
-    echo "1) 2022-blake3-aes-128-gcm (推荐/默认)"
-    echo "2) 2022-blake3-aes-256-gcm"
-    read -p "选择 [1-2]: " m
-    [[ "$m" == "2" ]] && us_method="2022-blake3-aes-256-gcm" || us_method="2022-blake3-aes-128-gcm"
-    
-    echo ""
-    echo "请选择 DNS 查询策略:"
-    echo "1) IPv4 优先 (默认)"
-    echo "2) IPv6 优先"
-    echo "3) 同时查询"
-    read -p "选择 [1-3]: " dns_choice
-    case "$dns_choice" in
-        2) DNS_STRATEGY="UseIPv6" ;;
-        3) DNS_STRATEGY="UseIP" ;;
-        *) DNS_STRATEGY="UseIPv4" ;;
-    esac
 
-    green "写入规则: Sniffing(防泄露) + KeepAlive(保活) + UDP/QUIC(加速)"
+    CURRENT_PK=$(grep -oP '"privateKey": "\K[^"]+' "$XRAY_CONF")
+    get_ss_status
+    
+    # === 变量准备 ===
+    if [[ "$mode" == "refresh" ]]; then
+        # 刷新模式：从 JSON 读取现有配置，不询问用户
+        us_addr=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].address' "$XRAY_CONF")
+        us_port=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].port' "$XRAY_CONF")
+        us_method=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].method' "$XRAY_CONF")
+        us_pass=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].password' "$XRAY_CONF")
+        DNS_STRATEGY="UseIPv4" # 刷新时默认回退IPv4，或可从配置读取（稍微复杂点，这里简化）
+    else
+        # 正常交互模式
+        clear
+        echo ""; echo -e "\033[33m       🌐 配置分流 (Gemini + ChatGPT -> US)\033[0m"; echo ""
+        
+        if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
+            green "当前 US 目标: $SS_IP"
+            read -p "是否修改? (y/n) [n]: " modify
+            [[ "$modify" != "y" ]] && return
+        fi
+        
+        read -p "$(yellow "1. US IP地址: ") " us_addr
+        [[ -z "$us_addr" ]] && return
+        read -p "$(yellow "2. US 端口: ") " us_port
+        [[ -z "$us_port" ]] && return
+        read -p "$(yellow "3. SS2022 密钥: ") " us_pass
+        [[ -z "$us_pass" ]] && return
+        
+        echo ""
+        echo "请选择 SS2022 加密方式:"
+        echo "1) 2022-blake3-aes-128-gcm (推荐/默认)"
+        echo "2) 2022-blake3-aes-256-gcm"
+        read -p "选择 [1-2]: " m
+        [[ "$m" == "2" ]] && us_method="2022-blake3-aes-256-gcm" || us_method="2022-blake3-aes-128-gcm"
+        
+        echo ""
+        echo "请选择 DNS 查询策略:"
+        echo "1) IPv4 优先 (默认)"
+        echo "2) IPv6 优先"
+        echo "3) 同时查询"
+        read -p "选择 [1-3]: " dns_choice
+        case "$dns_choice" in
+            2) DNS_STRATEGY="UseIPv6" ;;
+            3) DNS_STRATEGY="UseIP" ;;
+            *) DNS_STRATEGY="UseIPv4" ;;
+        esac
+    fi
+
+    # 确定 YouTube 路由标签
+    if [[ "$YOUTUBE_MODE" == "proxy" ]]; then
+        YT_TAG="US_SS2022"
+        YT_INFO="代理 (US_SS2022)"
+    else
+        YT_TAG="direct"
+        YT_INFO="直连"
+    fi
+
+    if [[ "$mode" != "refresh" ]]; then
+        green "写入规则: Sniffing(防泄露) + KeepAlive(保活) + UDP/QUIC(加速)"
+    fi
     
     INBOUND_REALITY=$(get_inbound_config "reality-in" $PORT "vless")
     
@@ -526,7 +565,7 @@ setup_ai_routing_ss2022() {
       $SS_RULE
       {
         "type": "field",
-        "outboundTag": "direct",
+        "outboundTag": "$YT_TAG",
         "domain": [
           "geosite:youtube",
           "domain:googlevideo.com",
@@ -576,10 +615,47 @@ setup_ai_routing_ss2022() {
 JSON
     systemctl restart xray
     if systemctl is-active --quiet xray; then
-        echo ""; green "✅ 分流配置成功 (安全+极速)";
+        echo ""
+        if [[ "$mode" == "refresh" ]]; then
+            green "✅ YouTube 路由已切换为: $YT_INFO"
+        else
+            green "✅ 分流配置成功 (安全+极速)"
+            echo "   - AI 流量  -> 代理"
+            echo "   - YouTube  -> $YT_INFO"
+        fi
     else
         echo ""; red "❌ [失败] 启动失败";
     fi
+}
+
+toggle_youtube() {
+    if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
+    source "$ENV_FILE"
+    
+    # 检查是否已配置上游代理 (必须先有 US_SS2022 才能代理 YouTube)
+    get_ss_status
+    if [[ -z "$SS_IP" || "$SS_IP" == "null" ]]; then 
+        red "❌ 必须先配置分流 (选项 6) 设定上游代理，才能切换 YouTube 路由！"
+        read -p "按回车返回..."
+        return
+    fi
+
+    # 切换状态
+    if [[ "${YOUTUBE_MODE:-direct}" == "proxy" ]]; then
+        sed -i '/^YOUTUBE_MODE=/d' "$ENV_FILE"
+        echo "YOUTUBE_MODE=direct" >> "$ENV_FILE"
+        export YOUTUBE_MODE="direct"
+        green "🔄 正在切换: YouTube -> 直连..."
+    else
+        sed -i '/^YOUTUBE_MODE=/d' "$ENV_FILE"
+        echo "YOUTUBE_MODE=proxy" >> "$ENV_FILE"
+        export YOUTUBE_MODE="proxy"
+        green "🔄 正在切换: YouTube -> 代理 (US_SS2022)..."
+    fi
+
+    # 刷新配置
+    setup_ai_routing_ss2022 "refresh"
+    read -p "按回车返回..."
 }
 
 disable_routing() {
@@ -649,6 +725,7 @@ menu() {
     install_jq
     install_self
     get_ss_status
+    if [[ -f "$ENV_FILE" ]]; then source "$ENV_FILE"; fi
     
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
         AI_STATUS="[\033[32m开启\033[0m]"
@@ -661,6 +738,13 @@ menu() {
     else
         SS_SERVER_STATUS="[\033[31m未创建\033[0m]"
     fi
+
+    # YouTube 状态显示
+    if [[ "${YOUTUBE_MODE:-direct}" == "proxy" ]]; then
+        YT_STATUS="[\033[32m代理\033[0m]"
+    else
+        YT_STATUS="[\033[33m直连\033[0m]"
+    fi
     
     echo ""
     echo -e "\033[33m"
@@ -672,7 +756,7 @@ menu() {
     echo "╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝      ╚═╝  "
     echo -e "\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\033[32m              Reality 管理面板 v2.7\033[0m"
+    echo -e "\033[32m              Reality 管理面板 v2.8\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo ""
     echo -e "\033[36m  [1]\033[0m 查看 Reality 节点"
@@ -681,7 +765,8 @@ menu() {
     echo -e "\033[36m  [4]\033[0m 重启服务"
     echo -e "\033[36m  [5]\033[0m 彻底卸载 (Uninstall & Clean)"
     echo -e "\033[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\033[36m  [6]\033[0m 开启分流 (Gemini+GPT -> US) $AI_STATUS"
+    echo -e "\033[36m  [6]\033[0m 配置/刷新分流 (Gemini+GPT)"
+    echo -e "\033[36m  [y]\033[0m 切换 YouTube 路由 $YT_STATUS"
     echo -e "\033[36m  [a]\033[0m 关闭分流 (恢复直连)"
     echo -e "\033[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo -e "\033[36m  [8]\033[0m 创建 SS2022 服务器 $SS_SERVER_STATUS"
@@ -699,6 +784,7 @@ menu() {
         4) systemctl restart xray; green "已重启" ;;
         5) uninstall_xray ;;
         6) setup_ai_routing_ss2022 ;;
+        y|Y) toggle_youtube ;;
         a|A) disable_routing ;;
         7) update_script ;;
         8) create_ss2022_server ;;
