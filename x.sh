@@ -465,7 +465,7 @@ setup_ai_routing_ss2022() {
         us_port=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].port' "$XRAY_CONF")
         us_method=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].method' "$XRAY_CONF")
         us_pass=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].password' "$XRAY_CONF")
-        DNS_STRATEGY="UseIPv4"
+        DNS_STRATEGY="${DNS_STRATEGY:-UseIP}"
     else
         # 正常交互模式
         clear
@@ -497,6 +497,10 @@ setup_ai_routing_ss2022() {
             3) DNS_STRATEGY="UseIP" ;;
             *) DNS_STRATEGY="UseIPv4" ;;
         esac
+        # 【新增这里】：把你的选择永久保存到环境文件中！
+        sed -i '/^DNS_STRATEGY=/d' "$ENV_FILE"
+        echo "DNS_STRATEGY=$DNS_STRATEGY" >> "$ENV_FILE"
+        export DNS_STRATEGY
     fi
 
     # === 构建 YouTube 规则 (混合模式核心) ===
