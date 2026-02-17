@@ -2,7 +2,7 @@
 set -u
 
 # ==================================================
-# Reality 管理脚本 v2.9 (Hybrid/混合模式版)
+# Reality 管理脚本 v2.9.1 
 # ==================================================
 
 # --- 全局变量 ---
@@ -288,13 +288,13 @@ create_ss2022_server() {
         US_METHOD=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].method' "$XRAY_CONF")
         US_PASS=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].password' "$XRAY_CONF")
         
-        # 恢复 YouTube 模式 (包含混合模式逻辑)
+        # 恢复 YouTube 模式 (注入健康探测防断流)
         YT_RULES=""
         CUR_MODE="${YOUTUBE_MODE:-direct}"
         if [[ "$CUR_MODE" == "proxy" ]]; then
-             YT_RULES='{ "type": "field", "outboundTag": "US_SS2022", "domain": ["geosite:youtube","domain:googlevideo.com"] },'
+             YT_RULES='{ "type": "field", "balancerTag": "HA_BALANCER", "domain": ["geosite:youtube","domain:googlevideo.com"] },'
         elif [[ "$CUR_MODE" == "hybrid" ]]; then
-             YT_RULES='{ "type": "field", "outboundTag": "direct", "domain": ["domain:googlevideo.com","domain:ggpht.com"] }, { "type": "field", "outboundTag": "US_SS2022", "domain": ["geosite:youtube"] },'
+             YT_RULES='{ "type": "field", "outboundTag": "direct", "domain": ["domain:googlevideo.com","domain:ggpht.com"] }, { "type": "field", "balancerTag": "HA_BALANCER", "domain": ["geosite:youtube"] },'
         else
              YT_RULES='{ "type": "field", "outboundTag": "direct", "domain": ["geosite:youtube","domain:googlevideo.com"] },'
         fi
@@ -302,6 +302,11 @@ create_ss2022_server() {
         cat > "$XRAY_CONF" <<JSON
 {
   "log": { "access": "none", "loglevel": "warning" },
+  "observatory": {
+    "subjectSelector": ["US_SS2022"],
+    "probeUrl": "https://www.gstatic.com/generate_204",
+    "probeInterval": "30s"
+  },
   "inbounds": [ $INBOUND_REALITY, $INBOUND_SS ],
   "outbounds": [
     { "protocol": "freedom", "tag": "direct" },
@@ -322,10 +327,17 @@ create_ss2022_server() {
   ],
   "routing": {
     "domainStrategy": "IPIfNonMatch",
+    "balancers": [
+      {
+        "tag": "HA_BALANCER",
+        "selector": ["US_SS2022"],
+        "fallbackTag": "direct"
+      }
+    ],
     "rules": [
       { "type": "field", "inboundTag": ["ss-in"], "outboundTag": "direct" },
       $YT_RULES
-      { "type": "field", "outboundTag": "US_SS2022", "domain": ["geosite:openai","geosite:google","geosite:bing","domain:ai.com","regexp:ocsp."] },
+      { "type": "field", "balancerTag": "HA_BALANCER", "domain": ["geosite:openai","geosite:google","geosite:bing","domain:ai.com","regexp:ocsp."] },
       { "type": "field", "outboundTag": "block", "network": "udp", "port": "443", "domain": ["geosite:openai","geosite:bing"] },
       { "type": "field", "outboundTag": "direct", "network": "udp,tcp" }
     ]
@@ -394,12 +406,16 @@ remove_ss2022_server() {
         US_METHOD=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].method' "$XRAY_CONF")
         US_PASS=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].password' "$XRAY_CONF")
 
-        # 检查当前 YouTube 模式，但既然删除了 SS2022，强制回退或仅保留直连
         YT_RULES='{ "type": "field", "outboundTag": "direct", "domain": ["geosite:youtube","domain:googlevideo.com"] },'
 
         cat > "$XRAY_CONF" <<JSON
 {
   "log": { "access": "none", "loglevel": "warning" },
+  "observatory": {
+    "subjectSelector": ["US_SS2022"],
+    "probeUrl": "https://www.gstatic.com/generate_204",
+    "probeInterval": "30s"
+  },
   "inbounds": [ $INBOUND_REALITY ],
   "outbounds": [
     { "protocol": "freedom", "tag": "direct" },
@@ -420,9 +436,16 @@ remove_ss2022_server() {
   ],
   "routing": {
     "domainStrategy": "IPIfNonMatch",
+    "balancers": [
+      {
+        "tag": "HA_BALANCER",
+        "selector": ["US_SS2022"],
+        "fallbackTag": "direct"
+      }
+    ],
     "rules": [
       $YT_RULES
-      { "type": "field", "outboundTag": "US_SS2022", "domain": ["geosite:openai","geosite:google","geosite:bing","regexp:ocsp."] },
+      { "type": "field", "balancerTag": "HA_BALANCER", "domain": ["geosite:openai","geosite:google","geosite:bing","regexp:ocsp."] },
       { "type": "field", "outboundTag": "block", "network": "udp", "port": "443", "domain": ["geosite:openai"] },
       { "type": "field", "outboundTag": "direct", "network": "udp,tcp" }
     ]
@@ -444,12 +467,11 @@ JSON
 }
 
 setup_ai_routing_ss2022() {
-    local mode="${1:-normal}" # 接受参数：normal(默认) 或 refresh(刷新)
+    local mode="${1:-normal}" 
     
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
     source "$ENV_FILE"
     
-    # 默认 YouTube 模式
     if [[ -z "${YOUTUBE_MODE:-}" ]]; then
         echo "YOUTUBE_MODE=direct" >> "$ENV_FILE"
         YOUTUBE_MODE="direct"
@@ -458,18 +480,15 @@ setup_ai_routing_ss2022() {
     CURRENT_PK=$(grep -oP '"privateKey": "\K[^"]+' "$XRAY_CONF")
     get_ss_status
     
-    # === 变量准备 ===
     if [[ "$mode" == "refresh" ]]; then
-        # 刷新模式：从 JSON 读取现有配置，不询问用户
         us_addr=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].address' "$XRAY_CONF")
         us_port=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].port' "$XRAY_CONF")
         us_method=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].method' "$XRAY_CONF")
         us_pass=$(jq -r '.outbounds[] | select(.tag=="US_SS2022") | .settings.servers[0].password' "$XRAY_CONF")
         DNS_STRATEGY="${DNS_STRATEGY:-UseIP}"
     else
-        # 正常交互模式
         clear
-        echo ""; echo -e "\033[33m       🌐 配置分流 (Gemini + ChatGPT -> US)\033[0m"; echo ""
+        echo ""; echo -e "\033[33m       🌐 配置分流节点 (加入自动断流直连兜底)\033[0m"; echo ""
         
         if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
             green "当前 US 目标: $SS_IP"
@@ -497,28 +516,21 @@ setup_ai_routing_ss2022() {
             3) DNS_STRATEGY="UseIP" ;;
             *) DNS_STRATEGY="UseIPv4" ;;
         esac
-        # 【新增这里】：把你的选择永久保存到环境文件中！
         sed -i '/^DNS_STRATEGY=/d' "$ENV_FILE"
         echo "DNS_STRATEGY=$DNS_STRATEGY" >> "$ENV_FILE"
         export DNS_STRATEGY
     fi
 
-    # === 构建 YouTube 规则 (混合模式核心) ===
     YT_RULES=""
     if [[ "$YOUTUBE_MODE" == "proxy" ]]; then
-        # 全代理模式：所有 YouTube 相关域名都走 US
-        YT_INFO="全代理 (US)"
-        YT_RULES='{ "type": "field", "outboundTag": "US_SS2022", "domain": ["geosite:youtube","domain:googlevideo.com"] },'
-        
+        YT_INFO="全代理 (US_SS2022 + 断流直连)"
+        YT_RULES='{ "type": "field", "balancerTag": "HA_BALANCER", "domain": ["geosite:youtube","domain:googlevideo.com"] },'
     elif [[ "$YOUTUBE_MODE" == "hybrid" ]]; then
-        # 混合模式：视频流直连，其他走 US (注意顺序：先匹配视频流)
         YT_INFO="混合 (界面US + 视频直连)"
         YT_RULES='
         { "type": "field", "outboundTag": "direct", "domain": ["domain:googlevideo.com", "domain:ggpht.com"] },
-        { "type": "field", "outboundTag": "US_SS2022", "domain": ["geosite:youtube"] },'
-        
+        { "type": "field", "balancerTag": "HA_BALANCER", "domain": ["geosite:youtube"] },'
     else
-        # 直连模式
         YT_INFO="直连"
         YT_RULES='{ "type": "field", "outboundTag": "direct", "domain": ["geosite:youtube","domain:googlevideo.com"] },'
     fi
@@ -527,7 +539,7 @@ setup_ai_routing_ss2022() {
     
     INBOUND_REALITY=$(get_inbound_config "reality-in" $PORT "vless")
     
-    if check_ss2022_server && [[ -n "$SS_PORT" ]]; then
+    if check_ss2022_server && [[ -n "${SS_PORT:-}" ]]; then
         INBOUND_SS=$(get_inbound_config "ss-in" $SS_PORT "shadowsocks")
         INBOUNDS_BLOCK="[ $INBOUND_REALITY, $INBOUND_SS ]"
         SS_RULE='{ "type": "field", "inboundTag": ["ss-in"], "outboundTag": "direct" },'
@@ -547,6 +559,11 @@ setup_ai_routing_ss2022() {
     "queryStrategy": "$DNS_STRATEGY",
     "disableCache": false,
     "disableFallback": true
+  },
+  "observatory": {
+    "subjectSelector": ["US_SS2022"],
+    "probeUrl": "https://www.gstatic.com/generate_204",
+    "probeInterval": "30s"
   },
   "inbounds": $INBOUNDS_BLOCK,
   "outbounds": [
@@ -573,12 +590,19 @@ setup_ai_routing_ss2022() {
   ],
   "routing": {
     "domainStrategy": "IPIfNonMatch",
+    "balancers": [
+      {
+        "tag": "HA_BALANCER",
+        "selector": ["US_SS2022"],
+        "fallbackTag": "direct"
+      }
+    ],
     "rules": [
       $SS_RULE
       $YT_RULES
       {
         "type": "field",
-        "outboundTag": "US_SS2022",
+        "balancerTag": "HA_BALANCER",
         "domain": [
           "geosite:openai",
           "geosite:google",
@@ -609,8 +633,8 @@ JSON
         if [[ "$mode" == "refresh" ]]; then
             green "✅ YouTube 路由已切换为: $YT_INFO"
         else
-            green "✅ 分流配置成功 (安全+极速)"
-            echo "   - AI 流量  -> 代理"
+            green "✅ 分流配置成功 (单节点容灾机制已开启)"
+            echo "   - AI 流量  -> 代理 (如果挂了自动走本机直连)"
             echo "   - YouTube  -> $YT_INFO"
         fi
     else
@@ -622,7 +646,6 @@ toggle_youtube() {
     if [[ ! -f "$ENV_FILE" ]]; then red "未找到配置"; return; fi
     source "$ENV_FILE"
     
-    # 检查是否已配置上游代理 (必须先有 US_SS2022 才能代理 YouTube)
     get_ss_status
     if [[ -z "$SS_IP" || "$SS_IP" == "null" ]]; then 
         red "❌ 必须先配置分流 (选项 6) 设定上游代理，才能切换 YouTube 路由！"
@@ -630,11 +653,10 @@ toggle_youtube() {
         return
     fi
 
-    # 循环切换状态: direct -> proxy -> hybrid -> direct
     case "${YOUTUBE_MODE:-direct}" in
         "direct")
             NEW_MODE="proxy"
-            MSG="全代理 (US_SS2022)"
+            MSG="全代理 (US_SS2022 + 断流直连)"
             ;;
         "proxy")
             NEW_MODE="hybrid"
@@ -653,7 +675,6 @@ toggle_youtube() {
     echo ""
     green "🔄 正在切换: YouTube -> $MSG..."
 
-    # 刷新配置
     setup_ai_routing_ss2022 "refresh"
     read -p "按回车返回..."
 }
@@ -664,7 +685,7 @@ disable_routing() {
     CURRENT_PK=$(grep -oP '"privateKey": "\K[^"]+' "$XRAY_CONF")
     INBOUND_REALITY=$(get_inbound_config "reality-in" $PORT "vless")
     
-    if check_ss2022_server && [[ -n "$SS_PORT" ]]; then
+    if check_ss2022_server && [[ -n "${SS_PORT:-}" ]]; then
         INBOUND_SS=$(get_inbound_config "ss-in" $SS_PORT "shadowsocks")
         INBOUNDS_BLOCK="[ $INBOUND_REALITY, $INBOUND_SS ]"
     else
@@ -708,7 +729,7 @@ show_info() {
     
     echo -e "\033[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     if [[ -n "$SS_IP" && "$SS_IP" != "null" ]]; then
-        echo -e "\033[33m分流 (Route):\033[0m       \033[32m✅ 开启 (嗅探+保活)\033[0m"
+        echo -e "\033[33m分流 (Route):\033[0m       \033[32m✅ 开启 (单点保活 + 智能直连兜底)\033[0m"
     else
         echo -e "\033[33m分流 (Route):\033[0m       \033[31m⛔ 关闭\033[0m"
     fi
@@ -756,7 +777,7 @@ menu() {
     echo "╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚══════╝╚═╝   ╚═╝      ╚═╝  "
     echo -e "\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
-    echo -e "\033[32m           Reality 管理面板 v2.9 (混合版)\033[0m"
+    echo -e "\033[32m           Reality 管理面板 v2.9.1\033[0m"
     echo -e "\033[36m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\033[0m"
     echo -e "\033[36m  [1]\033[0m 查看 Reality 节点"
     echo -e "\033[36m  [2]\033[0m 更新内核"
