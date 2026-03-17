@@ -1,15 +1,15 @@
-#!/usr/bin/env bash
+﻿#!/usr/bin/env bash
 
 # ==============================================================================
-# Xray VLESS-Reality & Shadowsocks 2022 管理脚本 (x.sh)
-# - 交互逻辑重构 x.sh
-# - 移除旧版 x.sh 的“分流/YouTube/上游SS”等功能，仅保留：Reality + SS2022
-# - 保留快捷键入口：alias xray='bash /root/x.sh'
+# Xray VLESS-Reality & Shadowsocks 2022 绠＄悊鑴氭湰 (x.sh)
+# - 浜や簰閫昏緫閲嶆瀯 x.sh
+# - 绉婚櫎鏃х増 x.sh 鐨勨€滃垎娴?YouTube/涓婃父SS鈥濈瓑鍔熻兘锛屼粎淇濈暀锛歊eality + SS2022
+# - 淇濈暀蹇嵎閿叆鍙ｏ細alias xray='bash /root/x.sh'
 # ==============================================================================
 
 set -euo pipefail
 
-# --- 全局常量 ---
+# --- 鍏ㄥ眬甯搁噺 ---
 readonly SCRIPT_VERSION="x.sh v3.0.3"
 readonly SCRIPT_PATH="/root/x.sh"
 readonly SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/EmersonLopez2005/myreality/main/x.sh"
@@ -18,29 +18,29 @@ readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
 
-# --- BBR / 网络优化 ---
+# --- BBR / 缃戠粶浼樺寲 ---
 readonly BBR_CONF_FILE="/etc/sysctl.d/99-bbr.conf"
 readonly BBR_STATE_DIR="/var/lib/xray-menu"
 readonly BBR_STATE_FILE="${BBR_STATE_DIR}/bbr-preapply.state"
 readonly BBR_MODULE_VERSION="bbr-module v1.1.0"
 
-# --- 快捷命令 (alias/备用命令) ---
+# --- 蹇嵎鍛戒护 (alias/澶囩敤鍛戒护) ---
 readonly MENU_BIN_SYMLINK="/usr/local/bin/xray-menu"
 
-# --- 颜色定义 ---
+# --- 棰滆壊瀹氫箟 ---
 readonly red='\e[91m' green='\e[92m' yellow='\e[93m'
 readonly magenta='\e[95m' cyan='\e[96m' blue='\e[94m' none='\e[0m'
 
-# --- 全局变量 ---
+# --- 鍏ㄥ眬鍙橀噺 ---
 xray_status_info=""
 is_quiet=false
 
-# 允许自动探测 xray 实际路径（不同安装环境可能不在 /usr/local/bin/xray）
+# Keep a mutable Xray binary path so runtime detection can override the default.
 XRAY_BIN="${xray_binary_path}"
 
-# --- 自安装：保留 xray 快捷键入口 ---
+# --- 鑷畨瑁咃細淇濈暀 xray 蹇嵎閿叆鍙?---
 install_self() {
-    # 1) 确保脚本在 /root/x.sh（允许你从任意路径执行一次后“固定”到 /root/x.sh）
+    # Copy the currently running script into the canonical install path.
     local self_src="${BASH_SOURCE[0]}"
     if [[ "$self_src" != "$SCRIPT_PATH" ]]; then
         cp -f "$self_src" "$SCRIPT_PATH"
@@ -49,8 +49,8 @@ install_self() {
         chmod +x "$SCRIPT_PATH" 2>/dev/null || true
     fi
 
-    # 2) 写入 alias（仅写一次）：根据当前 shell 写入 bashrc/zshrc
-    #    注意：alias 需要重新打开终端或 source 对应 rc 文件才能生效。
+    # 2) 鍐欏叆 alias锛堜粎鍐欎竴娆★級锛氭牴鎹綋鍓?shell 鍐欏叆 bashrc/zshrc
+    # Alias changes take effect after reopening the shell or sourcing the rc file.
     local rc_file=""
     case "${SHELL:-}" in
         */zsh) rc_file="$HOME/.zshrc" ;;
@@ -62,51 +62,51 @@ install_self() {
         fi
     fi
 
-    # 3) 安装一个备用命令：/usr/local/bin/xray-menu
-    #    这样即使 alias 没加载，你也能直接输入 xray-menu 进入菜单。
+    # 3) 瀹夎涓€涓鐢ㄥ懡浠わ細/usr/local/bin/xray-menu
+    # Install a fallback launcher even if the alias is not loaded.
     mkdir -p "$(dirname "$MENU_BIN_SYMLINK")"
     ln -sf "$SCRIPT_PATH" "$MENU_BIN_SYMLINK" 2>/dev/null || true
     chmod +x "$MENU_BIN_SYMLINK" 2>/dev/null || true
 
-    # 4) 尝试给当前 shell 临时生效（仅本次会话；不保证所有环境有效）
+    # 4) 灏濊瘯缁欏綋鍓?shell 涓存椂鐢熸晥锛堜粎鏈浼氳瘽锛涗笉淇濊瘉鎵€鏈夌幆澧冩湁鏁堬級
     alias xray="bash ${SCRIPT_PATH}" 2>/dev/null || true
 }
 
 update_script() {
-    info "正在从远程更新脚本..."
+    info "姝ｅ湪浠庤繙绋嬫洿鏂拌剼鏈?.."
     if ! command -v curl &>/dev/null; then
-        error "系统缺少 curl，无法在线更新脚本。"
+        error "绯荤粺缂哄皯 curl锛屾棤娉曞湪绾挎洿鏂拌剼鏈€?"
         return 1
     fi
     local tmp="/tmp/x.sh.$$"
     if ! curl -fsSL "$SCRIPT_UPDATE_URL" -o "$tmp"; then
-        error "下载脚本失败，请检查网络或更新地址。"
+        error "涓嬭浇鑴氭湰澶辫触锛岃妫€鏌ョ綉缁滄垨鏇存柊鍦板潃銆?"
         return 1
     fi
-    # 简单校验：至少包含 main_menu 字样，避免下载到 HTML/404
+    # 绠€鍗曟牎楠岋細鑷冲皯鍖呭惈 main_menu 瀛楁牱锛岄伩鍏嶄笅杞藉埌 HTML/404
     if ! grep -q "main_menu" "$tmp"; then
         rm -f "$tmp"
-        error "下载内容异常（未检测到 main_menu）。为安全起见已终止更新。"
+        error "涓嬭浇鍐呭寮傚父锛堟湭妫€娴嬪埌 main_menu锛夈€備负瀹夊叏璧疯宸茬粓姝㈡洿鏂般€?"
         return 1
     fi
     install -m 755 -o root -g root "$tmp" "$SCRIPT_PATH"
     rm -f "$tmp"
-    success "脚本已更新完成。请重新运行：xray"
+    success "鑴氭湰宸叉洿鏂板畬鎴愩€傝閲嶆柊杩愯锛歺ray"
 }
 
-# --- 辅助函数 ---
+# --- 杈呭姪鍑芥暟 ---
 error() {
-    echo -e "\n${red}[✖] $1${none}\n" >&2
+    echo -e "\n${red}[鉁朷 $1${none}\n" >&2
     case "$1" in
-        *"网络"*|*"下载"*) echo -e "${yellow}提示: 检查网络连接或更换DNS${none}" >&2 ;;
-        *"权限"*|*"root"*) echo -e "${yellow}提示: 请使用 sudo 运行脚本${none}" >&2 ;;
-        *"端口"*) echo -e "${yellow}提示: 尝试使用其他端口号${none}" >&2 ;;
+        *"缃戠粶"*|*"涓嬭浇"*) echo -e "${yellow}鎻愮ず: 妫€鏌ョ綉缁滆繛鎺ユ垨鏇存崲DNS${none}" >&2 ;;
+        *"鏉冮檺"*|*"root"*) echo -e "${yellow}鎻愮ず: 璇蜂娇鐢?sudo 杩愯鑴氭湰${none}" >&2 ;;
+        *"绔彛"*) echo -e "${yellow}鎻愮ず: 灏濊瘯浣跨敤鍏朵粬绔彛鍙?{none}" >&2 ;;
     esac
 }
 
 info() { [[ "$is_quiet" = false ]] && echo -e "\n${yellow}[!] $1${none}\n"; }
-success() { [[ "$is_quiet" = false ]] && echo -e "\n${green}[✔] $1${none}\n"; }
-warning() { [[ "$is_quiet" = false ]] && echo -e "\n${yellow}[⚠] $1${none}\n"; }
+success() { [[ "$is_quiet" = false ]] && echo -e "\n${green}[鉁擼 $1${none}\n"; }
+warning() { [[ "$is_quiet" = false ]] && echo -e "\n${yellow}[鈿燷 $1${none}\n"; }
 
 warning() { [[ "$is_quiet" = false ]] && echo -e "\n${yellow}[!] $1${none}\n" >&2; }
 
@@ -152,26 +152,25 @@ get_public_ip() {
     done
 }
 
-# --- 预检查与环境设置 ---
+# --- 棰勬鏌ヤ笌鐜璁剧疆 ---
 pre_check() {
-    [[ "$(id -u)" != 0 ]] && error "错误: 您必须以root用户身份运行此脚本" && exit 1
+    [[ "$(id -u)" != 0 ]] && error "閿欒: 鎮ㄥ繀椤讳互root鐢ㄦ埛韬唤杩愯姝よ剼鏈?" && exit 1
     if [[ ! -f /etc/debian_version ]]; then
-        error "错误: 此脚本仅支持 Debian/Ubuntu 及其衍生系统。" && exit 1
+        error "閿欒: 姝よ剼鏈粎鏀寔 Debian/Ubuntu 鍙婂叾琛嶇敓绯荤粺銆?" && exit 1
     fi
     if ! command -v jq &>/dev/null || ! command -v curl &>/dev/null || ! command -v openssl &>/dev/null; then
-        info "检测到缺失依赖 (jq/curl/openssl)，正在尝试自动安装..."
+        info "妫€娴嬪埌缂哄け渚濊禆 (jq/curl/openssl)锛屾鍦ㄥ皾璇曡嚜鍔ㄥ畨瑁?.."
         (DEBIAN_FRONTEND=noninteractive apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y jq curl openssl) &>/dev/null &
         spinner $!
         if ! command -v jq &>/dev/null || ! command -v curl &>/dev/null || ! command -v openssl &>/dev/null; then
-            error "依赖自动安装失败。请手动运行: apt update && apt install -y jq curl openssl" && exit 1
+            error "渚濊禆鑷姩瀹夎澶辫触銆傝鎵嬪姩杩愯: apt update && apt install -y jq curl openssl" && exit 1
         fi
-        success "依赖已成功安装。"
+        success "渚濊禆宸叉垚鍔熷畨瑁呫€?"
     fi
 }
 
 detect_xray_binary() {
-    # 重要：不要用 `command -v xray`，因为它可能返回 alias/function（例如 alias xray='bash /root/x.sh'）
-    # 这里用 `type -P` 只取真实二进制路径。
+    # Use type -P so aliases/functions named xray do not mask the real binary.
     local real
     real=$(type -P xray 2>/dev/null || true)
     if [[ -n "$real" ]]; then
@@ -189,61 +188,58 @@ detect_xray_binary() {
 check_xray_status() {
     detect_xray_binary >/dev/null 2>&1 || true
     if [[ ! -f "$XRAY_BIN" || ! -x "$XRAY_BIN" ]]; then
-        xray_status_info=" Xray 状态: ${red}未安装${none}"
+        xray_status_info=" Xray 鐘舵€? ${red}鏈畨瑁?{none}"
         return
     fi
     local xray_version service_status
-    # 某些环境下 `xray version` 可能会输出版本但返回非 0。
-    # 在 set -e 下会导致脚本提前退出，或版本字符串夹带换行/“未知”。
-    # 这里忽略返回码，并做清洗。
+    # Ignore the exit status here because some environments still print a version on non-zero exit.
     xray_version=$("$XRAY_BIN" version 2>/dev/null | head -n 1 | awk '{print $2}' || true)
     xray_version=$(echo -n "$xray_version" | tr -d '\r\n')
-    [[ -z "$xray_version" ]] && xray_version="未知"
+    [[ -z "$xray_version" ]] && xray_version="鏈煡"
     if systemctl is-active --quiet xray 2>/dev/null; then
-        service_status="${green}运行中${none}"
+        service_status="${green}杩愯涓?{none}"
     else
-        service_status="${yellow}未运行${none}"
+        service_status="${yellow}鏈繍琛?{none}"
     fi
-    xray_status_info=" Xray 状态: ${green}已安装${none} | ${service_status} | 版本: ${cyan}${xray_version}${none}"
+    xray_status_info=" Xray 鐘舵€? ${green}宸插畨瑁?{none} | ${service_status} | 鐗堟湰: ${cyan}${xray_version}${none}"
 }
 
 quick_status() {
     detect_xray_binary >/dev/null 2>&1 || true
     if [[ ! -f "$XRAY_BIN" ]]; then
-        echo -e " ${red}●${none} 未安装"
+        echo -e " ${red}鈼?{none} 鏈畨瑁?"
         return
     fi
     local status_icon
-    if systemctl is-active --quiet xray 2>/dev/null; then status_icon="${green}●${none}"; else status_icon="${red}●${none}"; fi
+    if systemctl is-active --quiet xray 2>/dev/null; then status_icon="${green}鈼?{none}"; else status_icon="${red}鈼?{none}"; fi
     echo -e " $status_icon Xray $(systemctl is-active xray 2>/dev/null || echo "inactive")"
 }
 
 generate_reality_keypair() {
-    # 输出两行：private_key\npublic_key
+    # 杈撳嚭涓よ锛歱rivate_key\npublic_key
     detect_xray_binary >/dev/null 2>&1 || true
     if [[ ! -x "$XRAY_BIN" ]]; then
-        error "错误: 未找到 xray 可执行文件（期望: $XRAY_BIN）。"
+        error "閿欒: 鏈壘鍒?xray 鍙墽琛屾枃浠讹紙鏈熸湜: $XRAY_BIN锛夈€?"
         return 1
     fi
 
     local out private_key reality_client_key
     out=$("$XRAY_BIN" x25519 2>&1 || true)
 
-    # 兼容多种输出格式（不同 xray 版本可能返回不同字段名）：
-    # - Private key: xxx
+    # 鍏煎澶氱杈撳嚭鏍煎紡锛堜笉鍚?xray 鐗堟湰鍙兘杩斿洖涓嶅悓瀛楁鍚嶏級锛?    # - Private key: xxx
     # - Public key:  xxx
     # - PrivateKey: xxx
     # - PublicKey:  xxx
-    # - Hash32:     xxx   (部分版本用 Hash32 作为可用于 Reality 的公钥/指纹字段)
+    # - Hash32:     xxx   (閮ㄥ垎鐗堟湰鐢?Hash32 浣滀负鍙敤浜?Reality 鐨勫叕閽?鎸囩汗瀛楁)
     private_key=$(echo "$out" | awk -F':' 'tolower($1) ~ /private/ {gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2; exit}')
 
-    # publicKey 优先，其次 Hash32
+    # publicKey 浼樺厛锛屽叾娆?Hash32
     reality_client_key=$(echo "$out" | awk -F':' 'tolower($1) ~ /(password|public[[:space:]]*key)/ {gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2; exit}')
 
     if [[ -z "$private_key" || -z "$reality_client_key" ]]; then
-        error "生成 Reality 密钥对失败：无法从 xray x25519 输出解析密钥。"
+        error "鐢熸垚 Reality 瀵嗛挜瀵瑰け璐ワ細鏃犳硶浠?xray x25519 杈撳嚭瑙ｆ瀽瀵嗛挜銆?"
         {
-            echo -e "${yellow}--- xray x25519 原始输出（便于排查）---${none}"
+            echo -e "${yellow}--- xray x25519 鍘熷杈撳嚭锛堜究浜庢帓鏌ワ級---${none}"
             echo "$out" | sed 's/^/  /'
             echo -e "${yellow}----------------------------------------${none}"
         } >&2
@@ -253,7 +249,7 @@ generate_reality_keypair() {
     printf "%s\n%s\n" "$private_key" "$reality_client_key"
 }
 
-# --- Reality shortId (shortkey) 随机生成 ---
+# --- Reality shortId (shortkey) 闅忔満鐢熸垚 ---
 derive_reality_client_key_from_private_key() {
     local private_key="$1"
     detect_xray_binary >/dev/null 2>&1 || true
@@ -285,7 +281,7 @@ get_reality_client_key_from_inbound() {
 }
 
 generate_shortid() {
-    # Reality shortId 推荐使用 8 个 hex 字符（4字节）
+    # Reality shortIds are typically 8 hex characters (4 bytes).
     local sid
     sid=$(openssl rand -hex 4 2>/dev/null || true)
     if [[ -z "$sid" ]]; then
@@ -294,7 +290,7 @@ generate_shortid() {
     echo "$sid"
 }
 
-# --- 核心配置生成函数 ---
+# --- 鏍稿績閰嶇疆鐢熸垚鍑芥暟 ---
 generate_ss_key() {
     openssl rand -base64 16 | tr -d '\r\n'
 }
@@ -310,23 +306,23 @@ is_valid_ss2022_password() {
 }
 
 prompt_for_ss_password() {
-    local -n p_pass="$1"
+    local -n ss_pass_ref="$1"
     local current_pass="${2:-}"
     local prompt_text="$3"
 
     while true; do
-        read -r -p "$prompt_text" p_pass || true
-        if [[ -z "$p_pass" ]]; then
+        read -r -p "$prompt_text" ss_pass_ref || true
+        if [[ -z "$ss_pass_ref" ]]; then
             if [[ -n "$current_pass" ]]; then
-                p_pass="$current_pass"
+                ss_pass_ref="$current_pass"
                 return 0
             fi
-            p_pass=$(generate_ss_key)
-            info "宸蹭负鎮ㄧ敓鎴愰殢鏈哄瘑閽? ${cyan}${p_pass}${none}"
+            ss_pass_ref=$(generate_ss_key)
+            info "瀹歌弓璐熼幃銊ф晸閹存劙娈㈤張鍝勭槕闁? ${cyan}${ss_pass_ref}${none}"
             return 0
         fi
 
-        if is_valid_ss2022_password "$p_pass"; then
+        if is_valid_ss2022_password "$ss_pass_ref"; then
             return 0
         fi
 
@@ -335,10 +331,10 @@ prompt_for_ss_password() {
 }
 
 # ==============================================================================
-# BBR / Linux 网络参数智能优化（融合 script.sh 的逻辑，增加可回滚/可查看状态）
+# BBR / Linux 缃戠粶鍙傛暟鏅鸿兘浼樺寲锛堣瀺鍚?script.sh 鐨勯€昏緫锛屽鍔犲彲鍥炴粴/鍙煡鐪嬬姸鎬侊級
 # ==============================================================================
 
-# --- BBR 全局变量（统一使用 BBR_ 前缀，避免与主脚本变量冲突） ---
+# --- BBR 鍏ㄥ眬鍙橀噺锛堢粺涓€浣跨敤 BBR_ 鍓嶇紑锛岄伩鍏嶄笌涓昏剼鏈彉閲忓啿绐侊級 ---
 BBR_TOTAL_MEM=""
 BBR_CPU_CORES=""
 BBR_VIRT_TYPE=""
@@ -350,7 +346,7 @@ BBR_SOMAXCONN=""
 BBR_FILE_MAX=""
 BBR_CONNTRACK_MAX=""
 
-# 运行时选择的优化策略（均衡/高并发/省内存）
+# 杩愯鏃堕€夋嫨鐨勪紭鍖栫瓥鐣ワ紙鍧囪　/楂樺苟鍙?鐪佸唴瀛橈級
 BBR_PROFILE="balanced"
 BBR_TW_REUSE="1"
 
@@ -370,7 +366,7 @@ bbr_get_system_info() {
 }
 
 bbr_calculate_parameters() {
-    # 基础连接数设置 - 代理服务器通常需要更多连接跟踪
+    # Scale kernel networking limits by RAM tier so smaller VPSes do not overcommit.
     if [[ "${BBR_TOTAL_MEM:-0}" -le 512 ]]; then
         BBR_VM_TIER="entry-level <=512MB"
         BBR_RMEM_MAX="16777216"   # 16MB
@@ -403,20 +399,20 @@ bbr_calculate_parameters() {
         BBR_TCP_MEM_MAX="134217728"
         BBR_SOMAXCONN="65535"
         BBR_FILE_MAX="2097152"
-        BBR_CONNTRACK_MAX="1048576" # 100万连接通常足够
+        BBR_CONNTRACK_MAX="1048576" # 100涓囪繛鎺ラ€氬父瓒冲
     fi
 }
 
 bbr_pre_flight_checks() {
-    [[ $(id -u) -ne 0 ]] && error "❌ 错误: 必须 root 权限。" && return 1
-    # 尝试加载必要内核模块（失败不致命：容器环境或精简内核可能不允许）
+    [[ $(id -u) -ne 0 ]] && error "鉂?閿欒: 蹇呴』 root 鏉冮檺銆?" && return 1
+    # 灏濊瘯鍔犺浇蹇呰鍐呮牳妯″潡锛堝け璐ヤ笉鑷村懡锛氬鍣ㄧ幆澧冩垨绮剧畝鍐呮牳鍙兘涓嶅厑璁革級
     modprobe nf_conntrack >/dev/null 2>&1 || true
     modprobe tcp_bbr >/dev/null 2>&1 || true
     return 0
 }
 
 bbr_add_conf() {
-    # 用法: bbr_add_conf <file> <key> <value> <comment>
+    # 鐢ㄦ硶: bbr_add_conf <file> <key> <value> <comment>
     local file="$1" key="$2" value="$3" comment="$4"
     {
         echo "# $comment"
@@ -428,7 +424,7 @@ bbr_add_conf() {
 bbr_manage_backups() {
     if [[ -f "$BBR_CONF_FILE" ]]; then
         cp "$BBR_CONF_FILE" "$BBR_CONF_FILE.bak_$(date +%F_%H-%M-%S)"
-        # 保留最近 3 个备份
+        # Keep the three most recent backups.
         ls -t "$BBR_CONF_FILE.bak_"* 2>/dev/null | tail -n +4 | xargs -r rm
     fi
 }
@@ -513,27 +509,23 @@ bbr_scale_int() {
 }
 
 bbr_apply_profile_tuning() {
-    # 根据选择的 profile 对基础参数做倍率调整，并做上下限保护。
-    # profile:
-    #   balanced        默认均衡
-    #   high_concurrency 偏高并发（更多连接/队列/句柄/conntrack）
-    #   memory_saving    偏省内存（更保守的 conntrack/缓冲区/队列）
+    # Adjust base limits for the selected optimization profile.
     local profile="$1"
 
     case "$profile" in
         high_concurrency)
-            # 连接/队列/句柄上调（但仍限制上限，避免夸张参数）
+            # Favor larger connection and queue limits for busy proxy nodes.
             BBR_SOMAXCONN=$(bbr_scale_int "$BBR_SOMAXCONN" 2 1)
             BBR_FILE_MAX=$(bbr_scale_int "$BBR_FILE_MAX" 2 1)
             BBR_CONNTRACK_MAX=$(bbr_scale_int "$BBR_CONNTRACK_MAX" 2 1)
 
-            # 缓冲区轻微上调（避免极端占用内存）
+            # Increase socket buffer ceilings moderately without going extreme.
             BBR_RMEM_MAX=$(bbr_scale_int "$BBR_RMEM_MAX" 3 2)
             BBR_WMEM_MAX=$(bbr_scale_int "$BBR_WMEM_MAX" 3 2)
             BBR_TCP_MEM_MAX=$(bbr_scale_int "$BBR_TCP_MEM_MAX" 3 2)
             ;;
         memory_saving)
-            # 更保守：减少 conntrack / 队列 / 缓冲区，降低内存占用风险
+            # Use more conservative queue, conntrack, and buffer limits.
             BBR_SOMAXCONN=$(bbr_scale_int "$BBR_SOMAXCONN" 1 2)
             BBR_FILE_MAX=$(bbr_scale_int "$BBR_FILE_MAX" 1 2)
             BBR_CONNTRACK_MAX=$(bbr_scale_int "$BBR_CONNTRACK_MAX" 1 2)
@@ -546,12 +538,12 @@ bbr_apply_profile_tuning() {
             ;;
     esac
 
-    # 下限保护：太小会影响基本可用性
+    # Keep limits within sane floors and ceilings.
     BBR_SOMAXCONN=$(bbr_clamp_int "$BBR_SOMAXCONN" 4096 262144)
     BBR_FILE_MAX=$(bbr_clamp_int "$BBR_FILE_MAX" 65535 8388608)
     BBR_CONNTRACK_MAX=$(bbr_clamp_int "$BBR_CONNTRACK_MAX" 65536 2097152)
 
-    # 缓冲区保护：过大可能导致单连接/少量连接吃掉太多内存
+    # Prevent oversized per-socket buffers from consuming too much RAM.
     BBR_RMEM_MAX=$(bbr_clamp_int "$BBR_RMEM_MAX" 8388608 268435456)   # 8MB - 256MB
     BBR_WMEM_MAX=$(bbr_clamp_int "$BBR_WMEM_MAX" 8388608 268435456)
     BBR_TCP_MEM_MAX=$(bbr_clamp_int "$BBR_TCP_MEM_MAX" 8388608 268435456)
@@ -589,8 +581,7 @@ bbr_prompt_profile() {
 }
 
 bbr_build_conf_file() {
-    # 原子写入：生成临时文件，写完后由调用方 mv 覆盖。
-    # 输出: 临时文件路径（echo）
+    # Generate the sysctl file in a temp path and print that path to stdout.
     local profile="$1" tw_reuse="$2"
     bbr_get_system_info
     bbr_apply_profile_tuning "$profile"
@@ -601,70 +592,70 @@ bbr_build_conf_file() {
     cat >> "$tmp" << EOF
 # ==========================================================
 # Linux Network Tuning (Proxy/Forwarding Optimized)
-# 生成时间: $(date)
-# 硬件环境: ${BBR_TOTAL_MEM}MB RAM, ${BBR_CPU_CORES} CPU
-# 虚拟化  : ${BBR_VIRT_TYPE}
-# 档位    : ${BBR_VM_TIER}
-# 模式    : $(bbr_profile_label "$profile") (${profile})
-# 模块版本: ${BBR_MODULE_VERSION}
+# 鐢熸垚鏃堕棿: $(date)
+# 纭欢鐜: ${BBR_TOTAL_MEM}MB RAM, ${BBR_CPU_CORES} CPU
+# 铏氭嫙鍖? : ${BBR_VIRT_TYPE}
+# 妗ｄ綅    : ${BBR_VM_TIER}
+# 妯″紡    : $(bbr_profile_label "$profile") (${profile})
+# 妯″潡鐗堟湰: ${BBR_MODULE_VERSION}
 # ==========================================================
 EOF
 
-    # 0) 能力探测（更友好）
+    # Capability check: warn when BBR is unavailable, but still write the config.
     local available_cc
     available_cc=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || true)
     if ! echo " $available_cc " | grep -q " bbr "; then
-        warning "系统未检测到可用的 BBR 拥塞算法（available: ${available_cc:-未知}）。仍会写入配置，但可能不会生效。"
+        warning "绯荤粺鏈娴嬪埌鍙敤鐨?BBR 鎷ュ绠楁硶锛坅vailable: ${available_cc:-鏈煡}锛夈€備粛浼氬啓鍏ラ厤缃紝浣嗗彲鑳戒笉浼氱敓鏁堛€?"
     fi
 
-    # 1) BBR 与队列算法
-    bbr_add_conf "$tmp" "net.core.default_qdisc" "fq" "FQ 队列算法 (BBR 常用搭配)"
-    bbr_add_conf "$tmp" "net.ipv4.tcp_congestion_control" "bbr" "开启 BBR"
+    # 1) Congestion control and qdisc.
+    bbr_add_conf "$tmp" "net.core.default_qdisc" "fq" "FQ 闃熷垪绠楁硶 (BBR 甯哥敤鎼厤)"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_congestion_control" "bbr" "寮€鍚?BBR"
 
-    # 2) 缓冲区优化 (TCP & UDP)
-    bbr_add_conf "$tmp" "net.core.rmem_max" "$BBR_RMEM_MAX" "系统最大接收缓存"
-    bbr_add_conf "$tmp" "net.core.wmem_max" "$BBR_WMEM_MAX" "系统最大发送缓存"
-    bbr_add_conf "$tmp" "net.core.rmem_default" "262144" "默认接收缓存 (256k)"
-    bbr_add_conf "$tmp" "net.core.wmem_default" "262144" "默认发送缓存 (256k)"
-    bbr_add_conf "$tmp" "net.ipv4.tcp_rmem" "8192 262144 $BBR_TCP_MEM_MAX" "TCP读缓存 (min default max)"
-    bbr_add_conf "$tmp" "net.ipv4.tcp_wmem" "8192 262144 $BBR_TCP_MEM_MAX" "TCP写缓存 (min default max)"
-    bbr_add_conf "$tmp" "net.ipv4.udp_rmem_min" "16384" "UDP读缓存下限 (优化QUIC)"
-    bbr_add_conf "$tmp" "net.ipv4.udp_wmem_min" "16384" "UDP写缓存下限 (优化QUIC)"
+    # 2) 缂撳啿鍖轰紭鍖?(TCP & UDP)
+    bbr_add_conf "$tmp" "net.core.rmem_max" "$BBR_RMEM_MAX" "绯荤粺鏈€澶ф帴鏀剁紦瀛?"
+    bbr_add_conf "$tmp" "net.core.wmem_max" "$BBR_WMEM_MAX" "绯荤粺鏈€澶у彂閫佺紦瀛?"
+    bbr_add_conf "$tmp" "net.core.rmem_default" "262144" "榛樿鎺ユ敹缂撳瓨 (256k)"
+    bbr_add_conf "$tmp" "net.core.wmem_default" "262144" "榛樿鍙戦€佺紦瀛?(256k)"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_rmem" "8192 262144 $BBR_TCP_MEM_MAX" "TCP璇荤紦瀛?(min default max)"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_wmem" "8192 262144 $BBR_TCP_MEM_MAX" "TCP鍐欑紦瀛?(min default max)"
+    bbr_add_conf "$tmp" "net.ipv4.udp_rmem_min" "16384" "UDP璇荤紦瀛樹笅闄?(浼樺寲QUIC)"
+    bbr_add_conf "$tmp" "net.ipv4.udp_wmem_min" "16384" "UDP鍐欑紦瀛樹笅闄?(浼樺寲QUIC)"
 
-    # 3) 连接与队列上限
-    bbr_add_conf "$tmp" "net.core.somaxconn" "$BBR_SOMAXCONN" "最大监听队列"
-    bbr_add_conf "$tmp" "net.core.netdev_max_backlog" "$BBR_SOMAXCONN" "网卡积压队列"
-    bbr_add_conf "$tmp" "net.ipv4.tcp_max_syn_backlog" "$BBR_SOMAXCONN" "SYN半连接队列"
-    bbr_add_conf "$tmp" "net.ipv4.tcp_notsent_lowat" "16384" "降低未发送数据阈值 (降低延迟)"
+    # 3) Queue and backlog limits.
+    bbr_add_conf "$tmp" "net.core.somaxconn" "$BBR_SOMAXCONN" "鏈€澶х洃鍚槦鍒?"
+    bbr_add_conf "$tmp" "net.core.netdev_max_backlog" "$BBR_SOMAXCONN" "缃戝崱绉帇闃熷垪"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_max_syn_backlog" "$BBR_SOMAXCONN" "SYN鍗婅繛鎺ラ槦鍒?"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_notsent_lowat" "16384" "闄嶄綆鏈彂閫佹暟鎹槇鍊?(闄嶄綆寤惰繜)"
 
-    # 4) TIME_WAIT 与 端口复用
-    bbr_add_conf "$tmp" "net.ipv4.tcp_tw_reuse" "$tw_reuse" "开启 TIME_WAIT 复用 (高并发优化，可按需关闭)"
-    bbr_add_conf "$tmp" "net.ipv4.tcp_timestamps" "1" "开启时间戳 (配合 reuse)"
-    bbr_add_conf "$tmp" "net.ipv4.tcp_fin_timeout" "30" "缩短 FIN_WAIT 时间"
-    bbr_add_conf "$tmp" "net.ipv4.ip_local_port_range" "10000 65535" "扩大本地端口范围"
-    bbr_add_conf "$tmp" "net.ipv4.tcp_max_tw_buckets" "500000" "允许更多 TIME_WAIT socket"
+    # 4) TIME_WAIT 涓?绔彛澶嶇敤
+    bbr_add_conf "$tmp" "net.ipv4.tcp_tw_reuse" "$tw_reuse" "寮€鍚?TIME_WAIT 澶嶇敤 (楂樺苟鍙戜紭鍖栵紝鍙寜闇€鍏抽棴)"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_timestamps" "1" "寮€鍚椂闂存埑 (閰嶅悎 reuse)"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_fin_timeout" "30" "缂╃煭 FIN_WAIT 鏃堕棿"
+    bbr_add_conf "$tmp" "net.ipv4.ip_local_port_range" "10000 65535" "鎵╁ぇ鏈湴绔彛鑼冨洿"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_max_tw_buckets" "500000" "鍏佽鏇村 TIME_WAIT socket"
 
     # 5) TCP Keepalive
-    bbr_add_conf "$tmp" "net.ipv4.tcp_keepalive_time" "600" "TCP保活时间 (10分钟)"
-    bbr_add_conf "$tmp" "net.ipv4.tcp_keepalive_intvl" "15" "探测间隔"
-    bbr_add_conf "$tmp" "net.ipv4.tcp_keepalive_probes" "5" "探测次数"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_keepalive_time" "600" "TCP淇濇椿鏃堕棿 (10鍒嗛挓)"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_keepalive_intvl" "15" "鎺㈡祴闂撮殧"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_keepalive_probes" "5" "鎺㈡祴娆℃暟"
 
     # 6) Conntrack
-    bbr_add_conf "$tmp" "net.netfilter.nf_conntrack_max" "$BBR_CONNTRACK_MAX" "最大连接跟踪数 (过大可能吃内存)"
-    bbr_add_conf "$tmp" "net.netfilter.nf_conntrack_tcp_timeout_established" "7200" "连接跟踪超时 (2小时)"
-    bbr_add_conf "$tmp" "net.netfilter.nf_conntrack_tcp_timeout_time_wait" "120" "减少 TIME_WAIT 跟踪时间"
+    bbr_add_conf "$tmp" "net.netfilter.nf_conntrack_max" "$BBR_CONNTRACK_MAX" "鏈€澶ц繛鎺ヨ窡韪暟 (杩囧ぇ鍙兘鍚冨唴瀛?"
+    bbr_add_conf "$tmp" "net.netfilter.nf_conntrack_tcp_timeout_established" "7200" "杩炴帴璺熻釜瓒呮椂 (2灏忔椂)"
+    bbr_add_conf "$tmp" "net.netfilter.nf_conntrack_tcp_timeout_time_wait" "120" "鍑忓皯 TIME_WAIT 璺熻釜鏃堕棿"
 
-    # 7) 其他系统级优化
-    bbr_add_conf "$tmp" "fs.file-max" "$BBR_FILE_MAX" "最大文件句柄"
-    bbr_add_conf "$tmp" "vm.swappiness" "10" "减少 Swap 使用"
-    bbr_add_conf "$tmp" "net.ipv4.tcp_mtu_probing" "1" "开启 MTU 探测"
-    bbr_add_conf "$tmp" "net.ipv4.tcp_syncookies" "1" "防 SYN Flood"
+    # 7) Other system-level tuning.
+    bbr_add_conf "$tmp" "fs.file-max" "$BBR_FILE_MAX" "鏈€澶ф枃浠跺彞鏌?"
+    bbr_add_conf "$tmp" "vm.swappiness" "10" "鍑忓皯 Swap 浣跨敤"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_mtu_probing" "1" "寮€鍚?MTU 鎺㈡祴"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_syncookies" "1" "闃?SYN Flood"
 
     echo "$tmp"
 }
 
 bbr_apply_sysctl_from_file() {
-    # 逐项应用并汇总结果，避免某个参数失败导致全部失败
+    # 閫愰」搴旂敤骞舵眹鎬荤粨鏋滐紝閬垮厤鏌愪釜鍙傛暟澶辫触瀵艰嚧鍏ㄩ儴澶辫触
     local file="$1"
     local ok=0 missing=0 denied=0 invalid=0
     local -a failed_lines=()
@@ -685,7 +676,7 @@ bbr_apply_sysctl_from_file() {
             if [[ "$rc" -eq 0 ]]; then
                 ((ok++))
             else
-                # 分类统计（尽力而为）
+                # Classify the failure so the summary is actionable.
                 if echo "$out" | grep -qiE "No such file|not found"; then
                     ((missing++))
                     missing_keys+=("$key")
@@ -702,10 +693,10 @@ bbr_apply_sysctl_from_file() {
     done < "$file"
 
     echo "$ok|$missing|$denied|$invalid"
-    # 将失败详情写到 stderr（交互模式下也能看到）
+    # Write detailed failures to stderr so interactive runs still show them.
     if ((${#failed_lines[@]} > 0)); then
         {
-            echo -e "\n${yellow}以下参数未能成功应用（不一定影响核心功能）：${none}"
+            echo -e "\n${yellow}浠ヤ笅鍙傛暟鏈兘鎴愬姛搴旂敤锛堜笉涓€瀹氬奖鍝嶆牳蹇冨姛鑳斤級锛?{none}"
             for l in "${failed_lines[@]}"; do
                 echo "  - $l"
             done
@@ -718,41 +709,41 @@ bbr_detect_primary_iface() {
 }
 
 bbr_apply_optimizations() {
-    # 新逻辑：原子写入 + 逐项 sysctl 应用 + 汇总失败项 + 支持 profile
+    # 鏂伴€昏緫锛氬師瀛愬啓鍏?+ 閫愰」 sysctl 搴旂敤 + 姹囨€诲け璐ラ」 + 鏀寔 profile
     local profile="$1" tw_reuse="$2"
 
     bbr_get_system_info
     bbr_apply_profile_tuning "$profile"
 
     [[ "$is_quiet" = false ]] && {
-        echo -e "${cyan}>>> 系统信息检测：${none}"
-        echo -e "内存大小   : ${yellow}${BBR_TOTAL_MEM}MB${none}"
-        echo -e "CPU核心数  : ${yellow}${BBR_CPU_CORES}${none}"
-        echo -e "虚拟化类型 : ${yellow}${BBR_VIRT_TYPE}${none}"
-        echo -e "目标档位   : ${yellow}${BBR_VM_TIER}${none}"
-        echo -e "优化模式   : ${yellow}$(bbr_profile_label "$profile")${none}"
+        echo -e "${cyan}>>> 绯荤粺淇℃伅妫€娴嬶細${none}"
+        echo -e "鍐呭瓨澶у皬   : ${yellow}${BBR_TOTAL_MEM}MB${none}"
+        echo -e "CPU鏍稿績鏁? : ${yellow}${BBR_CPU_CORES}${none}"
+        echo -e "铏氭嫙鍖栫被鍨?: ${yellow}${BBR_VIRT_TYPE}${none}"
+        echo -e "鐩爣妗ｄ綅   : ${yellow}${BBR_VM_TIER}${none}"
+        echo -e "浼樺寲妯″紡   : ${yellow}$(bbr_profile_label "$profile")${none}"
     }
 
-    info "生成并应用网络优化配置 (${BBR_VM_TIER} / $(bbr_profile_label "$profile"))..."
+    info "鐢熸垚骞跺簲鐢ㄧ綉缁滀紭鍖栭厤缃?(${BBR_VM_TIER} / $(bbr_profile_label "$profile"))..."
     mkdir -p "$(dirname "$BBR_CONF_FILE")"
 
-    # 原子写：先写 tmp，再 mv 覆盖
+    # 鍘熷瓙鍐欙細鍏堝啓 tmp锛屽啀 mv 瑕嗙洊
     local tmp
     tmp=$(bbr_build_conf_file "$profile" "$tw_reuse")
     bbr_capture_runtime_state "$tmp"
     chmod 644 "$tmp" 2>/dev/null || true
     mv -f "$tmp" "$BBR_CONF_FILE"
 
-    info "正在逐项应用 sysctl 参数（可跳过不支持的键）..."
+    info "姝ｅ湪閫愰」搴旂敤 sysctl 鍙傛暟锛堝彲璺宠繃涓嶆敮鎸佺殑閿級..."
     local summary ok missing denied invalid cc qdisc reuse iface tcq
     summary=$(bbr_apply_sysctl_from_file "$BBR_CONF_FILE")
     ok=${summary%%|*}; summary=${summary#*|}
     missing=${summary%%|*}; summary=${summary#*|}
     denied=${summary%%|*}; invalid=${summary#*|}
 
-    cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "未知")
-    qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "未知")
-    reuse=$(sysctl -n net.ipv4.tcp_tw_reuse 2>/dev/null || echo "未知")
+    cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "鏈煡")
+    qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "鏈煡")
+    reuse=$(sysctl -n net.ipv4.tcp_tw_reuse 2>/dev/null || echo "鏈煡")
 
     iface=$(bbr_detect_primary_iface || true)
     if command -v tc >/dev/null 2>&1 && [[ -n "$iface" ]]; then
@@ -761,37 +752,36 @@ bbr_apply_optimizations() {
         tcq=""
     fi
 
-    success "网络优化完成！"
-    echo -e "已应用: ${green}${ok}${none} 项 | 不存在: ${yellow}${missing}${none} 项 | 权限/受限: ${yellow}${denied}${none} 项 | 其它失败: ${yellow}${invalid}${none} 项"
-    echo -e "拥塞控制: ${cyan}${cc}${none} | 队列算法: ${cyan}${qdisc}${none} | tcp_tw_reuse: ${cyan}${reuse}${none}"
-    [[ -n "$tcq" ]] && echo -e "网卡队列(tc): ${cyan}${tcq}${none}"
+    success "缃戠粶浼樺寲瀹屾垚锛?"
+    echo -e "宸插簲鐢? ${green}${ok}${none} 椤?| 涓嶅瓨鍦? ${yellow}${missing}${none} 椤?| 鏉冮檺/鍙楅檺: ${yellow}${denied}${none} 椤?| 鍏跺畠澶辫触: ${yellow}${invalid}${none} 椤?"
+    echo -e "鎷ュ鎺у埗: ${cyan}${cc}${none} | 闃熷垪绠楁硶: ${cyan}${qdisc}${none} | tcp_tw_reuse: ${cyan}${reuse}${none}"
+    [[ -n "$tcq" ]] && echo -e "缃戝崱闃熷垪(tc): ${cyan}${tcq}${none}"
 }
 
 bbr_apply_and_verify() {
-    # 兼容旧调用点（保留函数名），实际逻辑已在 bbr_apply_optimizations 中完成
+    # Compatibility shim for older call sites.
     :
 }
 
 bbr_uninstall() {
     if [[ ! -f "$BBR_CONF_FILE" ]]; then
-        warning "未发现 $BBR_CONF_FILE，无需卸载。"
+        warning "鏈彂鐜?$BBR_CONF_FILE锛屾棤闇€鍗歌浇銆?"
         return 0
     fi
 
-    info "正在卸载/回滚 BBR 网络优化配置..."
+    info "姝ｅ湪鍗歌浇/鍥炴粴 BBR 缃戠粶浼樺寲閰嶇疆..."
     mv -f "$BBR_CONF_FILE" "$BBR_CONF_FILE.removed_$(date +%F_%H-%M-%S)"
-    # 重载所有 sysctl.d（确保删除后生效）
-    sysctl --system >/dev/null 2>&1 || true
-    success "已移除优化配置（已保留 removed 备份）。"
+    # 閲嶈浇鎵€鏈?sysctl.d锛堢‘淇濆垹闄ゅ悗鐢熸晥锛?    sysctl --system >/dev/null 2>&1 || true
+    success "宸茬Щ闄や紭鍖栭厤缃紙宸蹭繚鐣?removed 澶囦唤锛夈€?"
 }
 
 bbr_uninstall() {
     if [[ ! -f "$BBR_CONF_FILE" ]]; then
-        warning "未发现 $BBR_CONF_FILE，无需卸载。"
+        warning "鏈彂鐜?$BBR_CONF_FILE锛屾棤闇€鍗歌浇銆?"
         return 0
     fi
 
-    info "正在卸载/回滚 BBR 网络优化配置..."
+    info "姝ｅ湪鍗歌浇/鍥炴粴 BBR 缃戠粶浼樺寲閰嶇疆..."
     mv -f "$BBR_CONF_FILE" "$BBR_CONF_FILE.removed_$(date +%F_%H-%M-%S)"
 
     local restore_summary restored failed
@@ -801,68 +791,67 @@ bbr_uninstall() {
         restored=${restore_summary%%|*}
         failed=${restore_summary#*|}
         rm -f "$BBR_STATE_FILE"
-        success "已移除优化配置，并尝试恢复 ${restored} 项原始 sysctl 值。"
+        success "宸茬Щ闄や紭鍖栭厤缃紝骞跺皾璇曟仮澶?${restored} 椤瑰師濮?sysctl 鍊笺€?"
         if [[ "$failed" != "0" ]]; then
-            warning "仍有 ${failed} 项 sysctl 未能恢复到应用前状态，如有异常可重启服务器。"
+            warning "浠嶆湁 ${failed} 椤?sysctl 鏈兘鎭㈠鍒板簲鐢ㄥ墠鐘舵€侊紝濡傛湁寮傚父鍙噸鍚湇鍔″櫒銆?"
         fi
     else
-        success "已移除优化配置（未找到原始 sysctl 备份，如有残留可重启服务器）。"
+        success "宸茬Щ闄や紭鍖栭厤缃紙鏈壘鍒板師濮?sysctl 澶囦唤锛屽鏈夋畫鐣欏彲閲嶅惎鏈嶅姟鍣級銆?"
     fi
 }
 
 bbr_status() {
     draw_menu_header
-    echo -e "${cyan} BBR/网络优化状态${none}"
+    echo -e "${cyan} BBR/缃戠粶浼樺寲鐘舵€?{none}"
     draw_divider
-    printf "  %-24s %s\n" "配置文件" "${BBR_CONF_FILE}"
+    printf "  %-24s %s\n" "閰嶇疆鏂囦欢" "${BBR_CONF_FILE}"
     if [[ -f "$BBR_CONF_FILE" ]]; then
-        printf "  %-24s %b\n" "是否存在" "${green}是${none}"
+        printf "  %-24s %b\n" "鏄惁瀛樺湪" "${green}鏄?{none}"
     else
-        printf "  %-24s %b\n" "是否存在" "${red}否${none}"
+        printf "  %-24s %b\n" "鏄惁瀛樺湪" "${red}鍚?{none}"
     fi
 
     local cc qdisc available
-    cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "未知")
-    qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "未知")
-    available=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || echo "未知")
+    cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "鏈煡")
+    qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "鏈煡")
+    available=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || echo "鏈煡")
 
-    printf "  %-24s %s\n" "当前拥塞控制" "${cc}"
-    printf "  %-24s %s\n" "可用拥塞控制" "${available}"
-    printf "  %-24s %s\n" "当前 qdisc" "${qdisc}"
+    printf "  %-24s %s\n" "褰撳墠鎷ュ鎺у埗" "${cc}"
+    printf "  %-24s %s\n" "鍙敤鎷ュ鎺у埗" "${available}"
+    printf "  %-24s %s\n" "褰撳墠 qdisc" "${qdisc}"
 
-    # 展示用户常用的“BBR 是否生效”排查项（可选项，尽力输出）
+    # 灞曠ず鐢ㄦ埛甯哥敤鐨勨€淏BR 鏄惁鐢熸晥鈥濇帓鏌ラ」锛堝彲閫夐」锛屽敖鍔涜緭鍑猴級
     echo ""
-    echo "  常用验证（可选）："
+    echo "  甯哥敤楠岃瘉锛堝彲閫夛級锛?"
 
     if command -v lsmod >/dev/null 2>&1; then
         local mod_line
-        # 注意：部分容器/精简系统中 lsmod 可能返回非 0（/proc/modules 不可用）。
-        # 在 set -e 环境下这会导致函数提前退出，所以这里用 || true 保底。
+        # Some minimal/container systems make lsmod fail, so keep this best-effort.
         mod_line=$(lsmod 2>/dev/null | awk '$1=="tcp_bbr"{print; exit}' || true)
         if [[ -n "$mod_line" ]]; then
-            printf "  %-24s %s\n" "tcp_bbr 模块" "已加载 (lsmod 可见)"
+            printf "  %-24s %s\n" "tcp_bbr 妯″潡" "宸插姞杞?(lsmod 鍙)"
         else
-            printf "  %-24s %s\n" "tcp_bbr 模块" "lsmod 未显示（可能未加载/或已编译进内核）"
+            printf "  %-24s %s\n" "tcp_bbr 妯″潡" "lsmod 鏈樉绀猴紙鍙兘鏈姞杞?鎴栧凡缂栬瘧杩涘唴鏍革級"
         fi
     else
-        printf "  %-24s %s\n" "tcp_bbr 模块" "无法检查（系统缺少 lsmod）"
+        printf "  %-24s %s\n" "tcp_bbr 妯″潡" "鏃犳硶妫€鏌ワ紙绯荤粺缂哄皯 lsmod锛?"
     fi
 
     local iface tcq
     iface=$(bbr_detect_primary_iface || true)
     if [[ -n "$iface" ]]; then
-        printf "  %-24s %s\n" "默认出口网卡" "${iface}"
+        printf "  %-24s %s\n" "榛樿鍑哄彛缃戝崱" "${iface}"
         if command -v tc >/dev/null 2>&1; then
             tcq=$(tc qdisc show dev "$iface" 2>/dev/null | head -n 1 || true)
-            [[ -n "$tcq" ]] && printf "  %-24s %s\n" "tc qdisc(网卡)" "${tcq}"
+            [[ -n "$tcq" ]] && printf "  %-24s %s\n" "tc qdisc(缃戝崱)" "${tcq}"
         else
-            printf "  %-24s %s\n" "tc qdisc(网卡)" "无法检查（系统缺少 tc 命令）"
+            printf "  %-24s %s\n" "tc qdisc(缃戝崱)" "鏃犳硶妫€鏌ワ紙绯荤粺缂哄皯 tc 鍛戒护锛?"
         fi
     else
-        printf "  %-24s %s\n" "默认出口网卡" "无法识别（ip route 无 default）"
+        printf "  %-24s %s\n" "榛樿鍑哄彛缃戝崱" "鏃犳硶璇嗗埆锛坕p route 鏃?default锛?"
     fi
     echo ""
-    echo "  关键参数："
+    echo "  鍏抽敭鍙傛暟锛?"
     sysctl net.ipv4.tcp_tw_reuse net.ipv4.tcp_timestamps net.core.somaxconn 2>/dev/null | sed 's/^/  /' || true
     draw_divider
 }
@@ -870,15 +859,15 @@ bbr_status() {
 bbr_menu() {
     while true; do
         draw_menu_header
-        echo -e "${cyan} BBR / 网络智能优化 (${BBR_MODULE_VERSION})${none}"
+        echo -e "${cyan} BBR / 缃戠粶鏅鸿兘浼樺寲 (${BBR_MODULE_VERSION})${none}"
         draw_divider
-        printf "  ${green}%-2s${none} %-35s\n" "1." "一键开启/智能优化 (写入并应用 sysctl)"
-        printf "  ${yellow}%-2s${none} %-35s\n" "2." "查看当前状态/是否生效"
-        printf "  ${red}%-2s${none} %-35s\n" "3." "卸载/回滚 (移除配置文件)"
+        printf "  ${green}%-2s${none} %-35s\n" "1." "涓€閿紑鍚?鏅鸿兘浼樺寲 (鍐欏叆骞跺簲鐢?sysctl)"
+        printf "  ${yellow}%-2s${none} %-35s\n" "2." "鏌ョ湅褰撳墠鐘舵€?鏄惁鐢熸晥"
+        printf "  ${red}%-2s${none} %-35s\n" "3." "鍗歌浇/鍥炴粴 (绉婚櫎閰嶇疆鏂囦欢)"
         draw_divider
-        printf "  ${magenta}%-2s${none} %-35s\n" "0." "返回主菜单"
+        printf "  ${magenta}%-2s${none} %-35s\n" "0." "杩斿洖涓昏彍鍗?"
         draw_divider
-        read -r -p " 请输入选项 [0-3]: " choice || true
+        read -r -p " 璇疯緭鍏ラ€夐」 [0-3]: " choice || true
         case "$choice" in
             1)
                 bbr_pre_flight_checks || { press_any_key_to_continue; continue; }
@@ -896,7 +885,7 @@ bbr_menu() {
                 press_any_key_to_continue
                 ;;
             0) return ;;
-            *) error "无效选项。"; press_any_key_to_continue ;;
+            *) error "鏃犳晥閫夐」銆?"; press_any_key_to_continue ;;
         esac
     done
 }
@@ -961,7 +950,7 @@ write_config() {
         }')
 
     if ! echo "$config_content" | jq . >/dev/null 2>&1; then
-        error "生成的配置文件格式错误！"
+        error "鐢熸垚鐨勯厤缃枃浠舵牸寮忛敊璇紒"
         return 1
     fi
 
@@ -974,7 +963,7 @@ execute_official_script() {
     local args="$1" script_content
     script_content=$(curl -L "$xray_install_script_url")
     if [[ -z "$script_content" || ! "$script_content" =~ "install-release" ]]; then
-        error "下载 Xray 官方安装脚本失败或内容异常！请检查网络连接。"
+        error "涓嬭浇 Xray 瀹樻柟瀹夎鑴氭湰澶辫触鎴栧唴瀹瑰紓甯革紒璇锋鏌ョ綉缁滆繛鎺ャ€?"
         return 1
     fi
     echo "$script_content" | bash -s -- $args &>/dev/null &
@@ -983,19 +972,19 @@ execute_official_script() {
 }
 
 run_core_install() {
-    info "正在下载并安装 Xray 核心..."
+    info "姝ｅ湪涓嬭浇骞跺畨瑁?Xray 鏍稿績..."
     if ! execute_official_script "install"; then
-        error "Xray 核心安装失败！"
+        error "Xray 鏍稿績瀹夎澶辫触锛?"
         return 1
     fi
-    info "正在更新 GeoIP 和 GeoSite 数据文件..."
+    info "姝ｅ湪鏇存柊 GeoIP 鍜?GeoSite 鏁版嵁鏂囦欢..."
     if ! execute_official_script "install-geodata"; then
-        warning "Geo-data 更新失败（通常不影响核心功能，可稍后再试）。"
+        warning "Geo-data 鏇存柊澶辫触锛堥€氬父涓嶅奖鍝嶆牳蹇冨姛鑳斤紝鍙◢鍚庡啀璇曪級銆?"
     fi
-    success "Xray 核心及数据文件已准备就绪。"
+    success "Xray 鏍稿績鍙婃暟鎹枃浠跺凡鍑嗗灏辩华銆?"
 }
 
-# --- 输入验证与交互函数 ---
+# --- 杈撳叆楠岃瘉涓庝氦浜掑嚱鏁?---
 is_valid_port() {
     local port="$1"
     [[ "$port" =~ ^[0-9]+$ ]] && [[ "$port" -ge 1 && "$port" -le 65535 ]]
@@ -1004,16 +993,25 @@ is_valid_port() {
 is_port_available() {
     local port="$1"
     is_valid_port "$port" || return 1
-    if ss -tlpn 2>/dev/null | grep -q ":$port "; then
-        warning "端口 $port 已被占用，建议选择其他端口"
+
+    local tcp_in_use=false udp_in_use=false
+    if ss -H -ltn 2>/dev/null | awk -v p=":$port" '$4 ~ p"$" {found=1; exit} END{exit !found}'; then tcp_in_use=true; fi
+    if ss -H -lun 2>/dev/null | awk -v p=":$port" '($4 ~ p"$") || ($5 ~ p"$") {found=1; exit} END{exit !found}'; then udp_in_use=true; fi
+
+    if [[ "$tcp_in_use" = true || "$udp_in_use" = true ]]; then
+        local proto="TCP/UDP"
+        [[ "$tcp_in_use" = true && "$udp_in_use" = false ]] && proto="TCP"
+        [[ "$tcp_in_use" = false && "$udp_in_use" = true ]] && proto="UDP"
+        warning "绔彛 $port 宸茶 ${proto} 鍗犵敤锛屽缓璁€夋嫨鍏朵粬绔彛"
         return 1
     fi
+
     return 0
 }
 
 is_valid_domain() {
     local domain="$1"
-    [[ "$domain" =~ ^[a-zA-Z0-9-]{1,63}(\.[a-zA-Z0-9-]{1,63})+$ ]] && [[ "$domain" != *--* ]]
+    [[ "$domain" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]
 }
 
 prompt_for_vless_config() {
@@ -1021,24 +1019,24 @@ prompt_for_vless_config() {
     local default_port="${4:-443}"
 
     while true; do
-        read -r -p "$(echo -e " -> 请输入 VLESS 端口 (默认: ${cyan}${default_port}${none}): ")" p_port || true
+        read -r -p "$(echo -e " -> 璇疯緭鍏?VLESS 绔彛 (榛樿: ${cyan}${default_port}${none}): ")" p_port || true
         [[ -z "$p_port" ]] && p_port="$default_port"
         if is_port_available "$p_port"; then break; fi
     done
-    info "VLESS 端口将使用: ${cyan}${p_port}${none}"
+    info "VLESS 绔彛灏嗕娇鐢? ${cyan}${p_port}${none}"
 
-    read -r -p "$(echo -e " -> 请输入UUID (留空将自动生成): ")" p_uuid || true
+    read -r -p "$(echo -e " -> 璇疯緭鍏UID (鐣欑┖灏嗚嚜鍔ㄧ敓鎴?: ")" p_uuid || true
     if [[ -z "$p_uuid" ]]; then
         p_uuid=$(cat /proc/sys/kernel/random/uuid)
-        info "已为您生成随机UUID: ${cyan}${p_uuid}${none}"
+        info "宸蹭负鎮ㄧ敓鎴愰殢鏈篣UID: ${cyan}${p_uuid}${none}"
     fi
 
     while true; do
-        read -r -p "$(echo -e " -> 请输入SNI域名 (默认: ${cyan}learn.microsoft.com${none}): ")" p_sni || true
+        read -r -p "$(echo -e " -> 璇疯緭鍏NI鍩熷悕 (榛樿: ${cyan}learn.microsoft.com${none}): ")" p_sni || true
         [[ -z "$p_sni" ]] && p_sni="learn.microsoft.com"
-        if is_valid_domain "$p_sni"; then break; else error "域名格式无效，请重新输入。"; fi
+        if is_valid_domain "$p_sni"; then break; else error "鍩熷悕鏍煎紡鏃犳晥锛岃閲嶆柊杈撳叆銆?"; fi
     done
-    info "SNI 域名将使用: ${cyan}${p_sni}${none}"
+    info "SNI 鍩熷悕灏嗕娇鐢? ${cyan}${p_sni}${none}"
 }
 
 prompt_for_ss_config() {
@@ -1046,25 +1044,25 @@ prompt_for_ss_config() {
     local default_port="${3:-8388}"
 
     while true; do
-        read -r -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}${default_port}${none}): ")" p_port || true
+        read -r -p "$(echo -e " -> 璇疯緭鍏?Shadowsocks 绔彛 (榛樿: ${cyan}${default_port}${none}): ")" p_port || true
         [[ -z "$p_port" ]] && p_port="$default_port"
         if is_port_available "$p_port"; then break; fi
     done
-    info "Shadowsocks 端口将使用: ${cyan}${p_port}${none}"
+    info "Shadowsocks 绔彛灏嗕娇鐢? ${cyan}${p_port}${none}"
 
-    read -r -p "$(echo -e " -> 请输入 Shadowsocks 密钥 (留空将自动生成): ")" p_pass || true
+    read -r -p "$(echo -e " -> 璇疯緭鍏?Shadowsocks 瀵嗛挜 (鐣欑┖灏嗚嚜鍔ㄧ敓鎴?: ")" p_pass || true
     if [[ -z "$p_pass" ]]; then
         p_pass=$(generate_ss_key)
-        info "已为您生成随机密钥: ${cyan}${p_pass}${none}"
+        info "宸蹭负鎮ㄧ敓鎴愰殢鏈哄瘑閽? ${cyan}${p_pass}${none}"
     fi
 }
 
-# --- 菜单功能函数 ---
-draw_divider() { printf "%0.s─" {1..48}; printf "\n"; }
+# --- 鑿滃崟鍔熻兘鍑芥暟 ---
+draw_divider() { printf "%0.s鈹€" {1..48}; printf "\n"; }
 
 draw_menu_header() {
     clear
-    echo -e "${cyan} Xray VLESS-Reality & Shadowsocks-2022 管理脚本${none}"
+    echo -e "${cyan} Xray VLESS-Reality & Shadowsocks-2022 绠＄悊鑴氭湰${none}"
     echo -e "${yellow} Version: ${SCRIPT_VERSION}${none}"
     draw_divider
     check_xray_status
@@ -1075,7 +1073,7 @@ draw_menu_header() {
 
 press_any_key_to_continue() {
     echo ""
-    read -n 1 -s -r -p " 按任意键返回主菜单..." || true
+    read -n 1 -s -r -p " 鎸変换鎰忛敭杩斿洖涓昏彍鍗?.." || true
 }
 
 install_menu() {
@@ -1087,40 +1085,40 @@ install_menu() {
 
     draw_menu_header
     if [[ -n "$vless_exists" && -n "$ss_exists" ]]; then
-        success "您已安装 VLESS-Reality + Shadowsocks-2022 双协议。"
-        info "如需修改，请使用主菜单的“修改配置”。\n如需重装，请先“卸载”后再重新“安装”。"
+        success "鎮ㄥ凡瀹夎 VLESS-Reality + Shadowsocks-2022 鍙屽崗璁€?"
+        info "濡傞渶淇敼锛岃浣跨敤涓昏彍鍗曠殑鈥滀慨鏀归厤缃€濄€俓n濡傞渶閲嶈锛岃鍏堚€滃嵏杞解€濆悗鍐嶉噸鏂扳€滃畨瑁呪€濄€?"
         return
     elif [[ -n "$vless_exists" && -z "$ss_exists" ]]; then
-        info "检测到您已安装 VLESS-Reality"
-        echo -e "${cyan} 请选择下一步操作${none}"
+        info "妫€娴嬪埌鎮ㄥ凡瀹夎 VLESS-Reality"
+        echo -e "${cyan} 璇烽€夋嫨涓嬩竴姝ユ搷浣?{none}"
         draw_divider
-        printf "  ${green}%-2s${none} %-35s\n" "1." "追加安装 Shadowsocks-2022 (组成双协议)"
-        printf "  ${red}%-2s${none} %-35s\n" "2." "覆盖重装 VLESS-Reality"
+        printf "  ${green}%-2s${none} %-35s\n" "1." "杩藉姞瀹夎 Shadowsocks-2022 (缁勬垚鍙屽崗璁?"
+        printf "  ${red}%-2s${none} %-35s\n" "2." "瑕嗙洊閲嶈 VLESS-Reality"
         draw_divider
-        printf "  ${yellow}%-2s${none} %-35s\n" "0." "返回主菜单"
+        printf "  ${yellow}%-2s${none} %-35s\n" "0." "杩斿洖涓昏彍鍗?"
         draw_divider
-        read -r -p " 请输入选项 [0-2]: " choice || true
+        read -r -p " 璇疯緭鍏ラ€夐」 [0-2]: " choice || true
         case "$choice" in
             1) add_ss_to_vless ;;
             2) install_vless_only ;;
             0) return ;;
-            *) error "无效选项。" ;;
+            *) error "鏃犳晥閫夐」銆? ";;
         esac
     elif [[ -z "$vless_exists" && -n "$ss_exists" ]]; then
-        info "检测到您已安装 Shadowsocks-2022"
-        echo -e "${cyan} 请选择下一步操作${none}"
+        info "妫€娴嬪埌鎮ㄥ凡瀹夎 Shadowsocks-2022"
+        echo -e "${cyan} 璇烽€夋嫨涓嬩竴姝ユ搷浣?{none}"
         draw_divider
-        printf "  ${green}%-2s${none} %-35s\n" "1." "追加安装 VLESS-Reality (组成双协议)"
-        printf "  ${red}%-2s${none} %-35s\n" "2." "覆盖重装 Shadowsocks-2022"
+        printf "  ${green}%-2s${none} %-35s\n" "1." "杩藉姞瀹夎 VLESS-Reality (缁勬垚鍙屽崗璁?"
+        printf "  ${red}%-2s${none} %-35s\n" "2." "瑕嗙洊閲嶈 Shadowsocks-2022"
         draw_divider
-        printf "  ${yellow}%-2s${none} %-35s\n" "0." "返回主菜单"
+        printf "  ${yellow}%-2s${none} %-35s\n" "0." "杩斿洖涓昏彍鍗?"
         draw_divider
-        read -r -p " 请输入选项 [0-2]: " choice || true
+        read -r -p " 璇疯緭鍏ラ€夐」 [0-2]: " choice || true
         case "$choice" in
             1) add_vless_to_ss ;;
             2) install_ss_only ;;
             0) return ;;
-            *) error "无效选项。" ;;
+            *) error "鏃犳晥閫夐」銆? ";;
         esac
     else
         clean_install_menu
@@ -1129,28 +1127,28 @@ install_menu() {
 
 clean_install_menu() {
     draw_menu_header
-    echo -e "${cyan} 请选择要安装的协议类型${none}"
+    echo -e "${cyan} 璇烽€夋嫨瑕佸畨瑁呯殑鍗忚绫诲瀷${none}"
     draw_divider
-    printf "  ${green}%-2s${none} %-35s\n" "1." "仅 VLESS-Reality"
-    printf "  ${cyan}%-2s${none} %-35s\n" "2." "仅 Shadowsocks-2022"
-    printf "  ${yellow}%-2s${none} %-35s\n" "3." "VLESS-Reality + Shadowsocks-2022 (双协议)"
+    printf "  ${green}%-2s${none} %-35s\n" "1." "浠?VLESS-Reality"
+    printf "  ${cyan}%-2s${none} %-35s\n" "2." "浠?Shadowsocks-2022"
+    printf "  ${yellow}%-2s${none} %-35s\n" "3." "VLESS-Reality + Shadowsocks-2022 (鍙屽崗璁?"
     draw_divider
-    printf "  ${magenta}%-2s${none} %-35s\n" "0." "返回主菜单"
+    printf "  ${magenta}%-2s${none} %-35s\n" "0." "杩斿洖涓昏彍鍗?"
     draw_divider
-    read -r -p " 请输入选项 [0-3]: " choice || true
+    read -r -p " 璇疯緭鍏ラ€夐」 [0-3]: " choice || true
     case "$choice" in
         1) install_vless_only ;;
         2) install_ss_only ;;
         3) install_dual ;;
         0) return ;;
-        *) error "无效选项。" ;;
+        *) error "鏃犳晥閫夐」銆? ";;
     esac
 }
 
 add_ss_to_vless() {
-    info "开始追加安装 Shadowsocks-2022..."
+    info "寮€濮嬭拷鍔犲畨瑁?Shadowsocks-2022..."
     if [[ -z "$(get_public_ip)" ]]; then
-        error "无法获取公网 IP 地址，操作中止。请检查您的网络连接。"
+        error "鏃犳硶鑾峰彇鍏綉 IP 鍦板潃锛屾搷浣滀腑姝€傝妫€鏌ユ偍鐨勭綉缁滆繛鎺ャ€?"
         return 1
     fi
     local vless_inbound vless_port default_ss_port ss_port ss_password ss_inbound
@@ -1163,14 +1161,14 @@ add_ss_to_vless() {
     write_config "[$vless_inbound, $ss_inbound]"
     if ! restart_xray; then return 1; fi
 
-    success "追加安装成功！"
+    success "杩藉姞瀹夎鎴愬姛锛?"
     view_all_info
 }
 
 add_vless_to_ss() {
-    info "开始追加安装 VLESS-Reality..."
+    info "寮€濮嬭拷鍔犲畨瑁?VLESS-Reality..."
     if [[ -z "$(get_public_ip)" ]]; then
-        error "无法获取公网 IP 地址，操作中止。请检查您的网络连接。"
+        error "鏃犳硶鑾峰彇鍏綉 IP 鍦板潃锛屾搷浣滀腑姝€傝妫€鏌ユ偍鐨勭綉缁滆繛鎺ャ€?"
         return 1
     fi
     local ss_inbound ss_port default_vless_port vless_port vless_uuid vless_domain key_pair private_key public_key shortid vless_inbound
@@ -1180,14 +1178,14 @@ add_vless_to_ss() {
 
     prompt_for_vless_config vless_port vless_uuid vless_domain "$default_vless_port"
 
-    info "正在生成 Reality 密钥对..."
+    info "姝ｅ湪鐢熸垚 Reality 瀵嗛挜瀵?.."
     key_pair=$(generate_reality_keypair) || return 1
     private_key=$(echo "$key_pair" | sed -n '1p')
     public_key=$(echo "$key_pair" | sed -n '2p')
     shortid=$(generate_shortid)
 
     if [[ -z "$private_key" || -z "$public_key" ]]; then
-        error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
+        error "鐢熸垚 Reality 瀵嗛挜瀵瑰け璐ワ紒璇锋鏌?Xray 鏍稿績鏄惁姝ｅ父锛屾垨灏濊瘯鍗歌浇鍚庨噸瑁呫€?"
         return 1
     fi
 
@@ -1195,26 +1193,26 @@ add_vless_to_ss() {
     write_config "[$vless_inbound, $ss_inbound]"
     if ! restart_xray; then return 1; fi
 
-    success "追加安装成功！"
+    success "杩藉姞瀹夎鎴愬姛锛?"
     view_all_info
 }
 
 install_vless_only() {
-    info "开始配置 VLESS-Reality..."
+    info "寮€濮嬮厤缃?VLESS-Reality..."
     local port uuid domain
     prompt_for_vless_config port uuid domain
     run_install_vless "$port" "$uuid" "$domain"
 }
 
 install_ss_only() {
-    info "开始配置 Shadowsocks-2022..."
+    info "寮€濮嬮厤缃?Shadowsocks-2022..."
     local port password
     prompt_for_ss_config port password
     run_install_ss "$port" "$password"
 }
 
 install_dual() {
-    info "开始配置双协议 (VLESS-Reality + Shadowsocks-2022)..."
+    info "寮€濮嬮厤缃弻鍗忚 (VLESS-Reality + Shadowsocks-2022)..."
     local vless_port vless_uuid vless_domain ss_port ss_password
     prompt_for_vless_config vless_port vless_uuid vless_domain
 
@@ -1227,58 +1225,61 @@ install_dual() {
 
 update_xray() {
     detect_xray_binary >/dev/null 2>&1 || true
-    if [[ ! -f "$XRAY_BIN" ]]; then error "错误: Xray 未安装。" && return; fi
-    info "正在检查最新版本..."
-    local current_version latest_version
-    # 同样忽略 version 的返回码，避免 set -e 直接退出
+    if [[ ! -f "$XRAY_BIN" ]]; then error "閿欒: Xray 鏈畨瑁呫€?" && return; fi
+    info "姝ｅ湪妫€鏌ユ渶鏂扮増鏈?.."
+    local current_version latest_version yn
     current_version=$("$XRAY_BIN" version 2>/dev/null | head -n 1 | awk '{print $2}' || true)
     current_version=$(echo -n "$current_version" | tr -d '\r\n')
-    [[ -z "$current_version" ]] && current_version="未知"
+    [[ -z "$current_version" ]] && current_version="鏈煡"
 
-    # 获取最新版本可能因为网络/DNS/GitHub API 限流而失败。
-    # 失败时给出明确提示，并允许用户选择“仍然尝试执行官方更新脚本”。
     latest_version=$(curl -fsSL --max-time 8 https://api.github.com/repos/XTLS/Xray-core/releases/latest 2>/dev/null \
         | jq -r '.tag_name' 2>/dev/null \
         | sed 's/^v//' || true)
 
     if [[ -z "$latest_version" || "$latest_version" == "null" ]]; then
-        warning "获取最新版本号失败（可能是网络/DNS 或 GitHub API 限流）。"
-        echo -e "  当前版本: ${cyan}${current_version}${none}"
-        read -r -p "  是否仍然尝试执行官方更新脚本？[Y/n]: " yn || true
+        warning "鑾峰彇鏈€鏂扮増鏈彿澶辫触锛堝彲鑳芥槸缃戠粶/DNS 鎴?GitHub API 闄愭祦锛夈€?"
+        echo -e "  褰撳墠鐗堟湰: ${cyan}${current_version}${none}"
+        read -r -p "  鏄惁浠嶇劧灏濊瘯鎵ц瀹樻柟鏇存柊鑴氭湰锛焄Y/n]: " yn || true
         if [[ "$yn" =~ ^[nN]$ ]]; then
-            info "已取消更新。"
+            info "宸插彇娑堟洿鏂般€?"
             return 0
         fi
-        info "开始执行官方更新脚本（不依赖 GitHub API 版本号查询）..."
-        run_core_install
+        info "寮€濮嬫墽琛屽畼鏂规洿鏂拌剼鏈紙涓嶄緷璧?GitHub API 鐗堟湰鍙锋煡璇級..."
+        if ! run_core_install; then
+            error "Xray 鏇存柊澶辫触锛? "
+            return 1
+        fi
         restart_xray || return 1
-        success "Xray 更新流程已执行完成（版本号请回到主菜单查看）。"
+        success "Xray 鏇存柊娴佺▼宸叉墽琛屽畬鎴愶紙鐗堟湰鍙疯鍥炲埌涓昏彍鍗曟煡鐪嬶級銆?"
         return 0
     fi
-    info "当前版本: ${cyan}${current_version}${none}，最新版本: ${cyan}${latest_version}${none}"
-    if [[ "$current_version" == "$latest_version" ]]; then success "您的 Xray 已是最新版本。" && return; fi
-    info "发现新版本，开始更新..."
-    run_core_install
+    info "褰撳墠鐗堟湰: ${cyan}${current_version}${none}锛屾渶鏂扮増鏈? ${cyan}${latest_version}${none}"
+    if [[ "$current_version" == "$latest_version" ]]; then success "鎮ㄧ殑 Xray 宸叉槸鏈€鏂扮増鏈€?" && return; fi
+    info "鍙戠幇鏂扮増鏈紝寮€濮嬫洿鏂?.."
+    if ! run_core_install; then
+        error "Xray 鏇存柊澶辫触锛? "
+        return 1
+    fi
     if ! restart_xray; then return 1; fi
-    success "Xray 更新成功！"
+    success "Xray 鏇存柊鎴愬姛锛?"
 }
 
 uninstall_xray() {
     detect_xray_binary >/dev/null 2>&1 || true
-    if [[ ! -f "$XRAY_BIN" ]]; then error "错误: Xray 未安装。" && return; fi
-    read -r -p "$(echo -e "${yellow}您确定要卸载 Xray 吗？这将删除所有配置！[Y/n]: ${none}")" confirm || true
-    if [[ "$confirm" =~ ^[nN]$ ]]; then info "操作已取消。"; return; fi
-    info "正在卸载 Xray..."
+    if [[ ! -f "$XRAY_BIN" ]]; then error "閿欒: Xray 鏈畨瑁呫€?" && return; fi
+    read -r -p "$(echo -e "${yellow}鎮ㄧ‘瀹氳鍗歌浇 Xray 鍚楋紵杩欏皢鍒犻櫎鎵€鏈夐厤缃紒[Y/n]: ${none}")" confirm || true
+    if [[ "$confirm" =~ ^[nN]$ ]]; then info "鎿嶄綔宸插彇娑堛€?"; return; fi
+    info "姝ｅ湪鍗歌浇 Xray..."
     if ! execute_official_script "remove --purge"; then
-        error "Xray 卸载失败！"
+        error "Xray 鍗歌浇澶辫触锛?"
         return 1
     fi
     rm -f ~/xray_subscription_info.txt
-    success "Xray 已成功卸载。"
+    success "Xray 宸叉垚鍔熷嵏杞姐€?"
 }
 
 modify_config_menu() {
-    if [[ ! -f "$xray_config_path" ]]; then error "错误: Xray 未安装。" && return; fi
+    if [[ ! -f "$xray_config_path" ]]; then error "閿欒: Xray 鏈畨瑁呫€?" && return; fi
 
     local vless_exists="" ss_exists=""
     vless_exists=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path" 2>/dev/null || true)
@@ -1286,31 +1287,31 @@ modify_config_menu() {
 
     if [[ -n "$vless_exists" && -n "$ss_exists" ]]; then
         draw_menu_header
-        echo -e "${cyan} 请选择要修改的协议配置${none}"
+        echo -e "${cyan} 璇烽€夋嫨瑕佷慨鏀圭殑鍗忚閰嶇疆${none}"
         draw_divider
         printf "  ${green}%-2s${none} %-35s\n" "1." "VLESS-Reality"
         printf "  ${cyan}%-2s${none} %-35s\n" "2." "Shadowsocks-2022"
         draw_divider
-        printf "  ${yellow}%-2s${none} %-35s\n" "0." "返回主菜单"
+        printf "  ${yellow}%-2s${none} %-35s\n" "0." "杩斿洖涓昏彍鍗?"
         draw_divider
-        read -r -p " 请输入选项 [0-2]: " choice || true
+        read -r -p " 璇疯緭鍏ラ€夐」 [0-2]: " choice || true
         case "$choice" in
             1) modify_vless_config ;;
             2) modify_ss_config ;;
             0) return ;;
-            *) error "无效选项。" ;;
+            *) error "鏃犳晥閫夐」銆? ";;
         esac
     elif [[ -n "$vless_exists" ]]; then
         modify_vless_config
     elif [[ -n "$ss_exists" ]]; then
         modify_ss_config
     else
-        error "未找到可修改的协议配置。"
+        error "鏈壘鍒板彲淇敼鐨勫崗璁厤缃€?"
     fi
 }
 
 modify_vless_config() {
-    info "开始修改 VLESS-Reality 配置..."
+    info "寮€濮嬩慨鏀?VLESS-Reality 閰嶇疆..."
     local vless_inbound current_port current_uuid current_domain private_key public_key shortid
     local port uuid domain regenerate new_shortid new_vless_inbound ss_inbound new_inbounds
 
@@ -1323,21 +1324,21 @@ modify_vless_config() {
     shortid=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.shortIds[0]')
 
     while true; do
-        read -r -p "$(echo -e " -> 新端口 (当前: ${cyan}${current_port}${none}, 留空不改): ")" port || true
+        read -r -p "$(echo -e " -> 鏂扮鍙?(褰撳墠: ${cyan}${current_port}${none}, 鐣欑┖涓嶆敼): ")" port || true
         [[ -z "$port" ]] && port="$current_port"
         if is_port_available "$port" || [[ "$port" == "$current_port" ]]; then break; fi
     done
 
-    read -r -p "$(echo -e " -> 新UUID (当前: ${cyan}${current_uuid}${none}, 留空不改): ")" uuid || true
+    read -r -p "$(echo -e " -> 鏂癠UID (褰撳墠: ${cyan}${current_uuid}${none}, 鐣欑┖涓嶆敼): ")" uuid || true
     [[ -z "$uuid" ]] && uuid="$current_uuid"
 
     while true; do
-        read -r -p "$(echo -e " -> 新SNI域名 (当前: ${cyan}${current_domain}${none}, 留空不改): ")" domain || true
+        read -r -p "$(echo -e " -> 鏂癝NI鍩熷悕 (褰撳墠: ${cyan}${current_domain}${none}, 鐣欑┖涓嶆敼): ")" domain || true
         [[ -z "$domain" ]] && domain="$current_domain"
-        if is_valid_domain "$domain"; then break; else error "域名格式无效，请重新输入。"; fi
+        if is_valid_domain "$domain"; then break; else error "鍩熷悕鏍煎紡鏃犳晥锛岃閲嶆柊杈撳叆銆?"; fi
     done
 
-    read -r -p "$(echo -e " -> 是否重新生成 shortId (当前: ${cyan}${shortid}${none})? [y/N]: ")" regenerate || true
+    read -r -p "$(echo -e " -> 鏄惁閲嶆柊鐢熸垚 shortId (褰撳墠: ${cyan}${shortid}${none})? [y/N]: ")" regenerate || true
     if [[ "$regenerate" =~ ^[yY]$ ]]; then
         new_shortid=$(generate_shortid)
     else
@@ -1351,24 +1352,24 @@ modify_vless_config() {
 
     write_config "$new_inbounds"
     if ! restart_xray; then return 1; fi
-    success "配置修改成功！"
+    success "閰嶇疆淇敼鎴愬姛锛?"
     view_all_info
 }
 
 modify_ss_config() {
-    info "开始修改 Shadowsocks-2022 配置..."
+    info "寮€濮嬩慨鏀?Shadowsocks-2022 閰嶇疆..."
     local ss_inbound current_port current_password port password new_ss_inbound vless_inbound new_inbounds
     ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path")
     current_port=$(echo "$ss_inbound" | jq -r '.port')
     current_password=$(echo "$ss_inbound" | jq -r '.settings.password')
 
     while true; do
-        read -r -p "$(echo -e " -> 新端口 (当前: ${cyan}${current_port}${none}, 留空不改): ")" port || true
+        read -r -p "$(echo -e " -> 鏂扮鍙?(褰撳墠: ${cyan}${current_port}${none}, 鐣欑┖涓嶆敼): ")" port || true
         [[ -z "$port" ]] && port="$current_port"
         if is_port_available "$port" || [[ "$port" == "$current_port" ]]; then break; fi
     done
 
-    read -r -p "$(echo -e " -> 新密钥 (当前: ${cyan}${current_password}${none}, 留空不改): ")" password || true
+    read -r -p "$(echo -e " -> 鏂板瘑閽?(褰撳墠: ${cyan}${current_password}${none}, 鐣欑┖涓嶆敼): ")" password || true
     [[ -z "$password" ]] && password="$current_password"
 
     new_ss_inbound=$(build_ss_inbound "$port" "$password")
@@ -1378,25 +1379,25 @@ modify_ss_config() {
 
     write_config "$new_inbounds"
     if ! restart_xray; then return 1; fi
-    success "配置修改成功！"
+    success "閰嶇疆淇敼鎴愬姛锛?"
     view_all_info
 }
 
 restart_xray() {
     detect_xray_binary >/dev/null 2>&1 || true
-    if [[ ! -f "$XRAY_BIN" ]]; then error "错误: Xray 未安装。" && return 1; fi
-    info "正在重启 Xray 服务..."
+    if [[ ! -f "$XRAY_BIN" ]]; then error "閿欒: Xray 鏈畨瑁呫€?" && return 1; fi
+    info "姝ｅ湪閲嶅惎 Xray 鏈嶅姟..."
     if ! systemctl restart xray; then
-        error "尝试重启 Xray 服务失败！"
-        echo -e "\n${yellow}错误详情:${none}"
+        error "灏濊瘯閲嶅惎 Xray 鏈嶅姟澶辫触锛?"
+        echo -e "\n${yellow}閿欒璇︽儏:${none}"
         systemctl status xray --no-pager -l | tail -5
         return 1
     fi
     sleep 2
     if systemctl is-active --quiet xray; then
-        success "Xray 服务已成功重启！"
+        success "Xray 鏈嶅姟宸叉垚鍔熼噸鍚紒"
     else
-        error "服务启动失败，详细信息:"
+        error "鏈嶅姟鍚姩澶辫触锛岃缁嗕俊鎭?"
         systemctl status xray --no-pager -l | tail -5
         return 1
     fi
@@ -1404,24 +1405,24 @@ restart_xray() {
 
 view_xray_log() {
     detect_xray_binary >/dev/null 2>&1 || true
-    if [[ ! -f "$XRAY_BIN" ]]; then error "错误: Xray 未安装。" && return; fi
-    info "正在显示 Xray 实时日志... 按 Ctrl+C 退出。"
+    if [[ ! -f "$XRAY_BIN" ]]; then error "閿欒: Xray 鏈畨瑁呫€?" && return; fi
+    info "姝ｅ湪鏄剧ず Xray 瀹炴椂鏃ュ織... 鎸?Ctrl+C 閫€鍑恒€?"
     journalctl -u xray -f --no-pager
 }
 
 view_all_info() {
     if [[ ! -f "$xray_config_path" ]]; then
         [[ "$is_quiet" = true ]] && return
-        error "错误: 配置文件不存在。"
+        error "閿欒: 閰嶇疆鏂囦欢涓嶅瓨鍦ㄣ€?"
         return
     fi
 
-    [[ "$is_quiet" = false ]] && clear && echo -e "${cyan} Xray 配置及订阅信息${none}" && draw_divider
+    [[ "$is_quiet" = false ]] && clear && echo -e "${cyan} Xray 閰嶇疆鍙婅闃呬俊鎭?{none}" && draw_divider
 
     local ip host
     ip=$(get_public_ip)
     if [[ -z "$ip" ]]; then
-        [[ "$is_quiet" = false ]] && error "无法获取公网 IP 地址。"
+        [[ "$is_quiet" = false ]] && error "鏃犳硶鑾峰彇鍏綉 IP 鍦板潃銆?"
         return 1
     fi
     host=$(hostname)
@@ -1444,10 +1445,10 @@ view_all_info() {
         links_array+=("$vless_url")
 
         if [[ "$is_quiet" = false ]]; then
-            echo -e "${green} [ VLESS-Reality 配置 ]${none}"
-            printf "    %s: ${cyan}%s${none}\n" "节点名称" "$link_name_raw"
-            printf "    %s: ${cyan}%s${none}\n" "服务器地址" "$ip"
-            printf "    %s: ${cyan}%s${none}\n" "端口" "$port"
+            echo -e "${green} [ VLESS-Reality 閰嶇疆 ]${none}"
+            printf "    %s: ${cyan}%s${none}\n" "鑺傜偣鍚嶇О" "$link_name_raw"
+            printf "    %s: ${cyan}%s${none}\n" "鏈嶅姟鍣ㄥ湴鍧€" "$ip"
+            printf "    %s: ${cyan}%s${none}\n" "绔彛" "$port"
             printf "    %s: ${cyan}%s${none}\n" "UUID" "$uuid"
             printf "    %s: ${cyan}%s${none}\n" "SNI" "$domain"
             printf "    %s: ${cyan}%s${none}\n" "Password(pbk)" "$public_key"
@@ -1469,12 +1470,12 @@ view_all_info() {
 
         if [[ "$is_quiet" = false ]]; then
             echo ""
-            echo -e "${green} [ Shadowsocks-2022 配置 ]${none}"
-            printf "    %s: ${cyan}%s${none}\n" "节点名称" "$link_name_raw"
-            printf "    %s: ${cyan}%s${none}\n" "服务器地址" "$ip"
-            printf "    %s: ${cyan}%s${none}\n" "端口" "$port"
-            printf "    %s: ${cyan}%s${none}\n" "加密方式" "$method"
-            printf "    %s: ${cyan}%s${none}\n" "密码" "$password"
+            echo -e "${green} [ Shadowsocks-2022 閰嶇疆 ]${none}"
+            printf "    %s: ${cyan}%s${none}\n" "鑺傜偣鍚嶇О" "$link_name_raw"
+            printf "    %s: ${cyan}%s${none}\n" "鏈嶅姟鍣ㄥ湴鍧€" "$ip"
+            printf "    %s: ${cyan}%s${none}\n" "绔彛" "$port"
+            printf "    %s: ${cyan}%s${none}\n" "鍔犲瘑鏂瑰紡" "$method"
+            printf "    %s: ${cyan}%s${none}\n" "瀵嗙爜" "$password"
         fi
     fi
 
@@ -1484,28 +1485,28 @@ view_all_info() {
         else
             draw_divider
             printf "%s\n" "${links_array[@]}" > ~/xray_subscription_info.txt
-            success "所有订阅链接已汇总保存到: ~/xray_subscription_info.txt"
-            echo -e "\n${yellow} --- 客户端可直接导入以下链接 --- ${none}\n"
+            success "鎵€鏈夎闃呴摼鎺ュ凡姹囨€讳繚瀛樺埌: ~/xray_subscription_info.txt"
+            echo -e "\n${yellow} --- 瀹㈡埛绔彲鐩存帴瀵煎叆浠ヤ笅閾炬帴 --- ${none}\n"
             for link in "${links_array[@]}"; do
                 echo -e "${cyan}${link}${none}\n"
             done
             draw_divider
         fi
     elif [[ "$is_quiet" = false ]]; then
-        info "当前未安装任何协议，无订阅信息可显示。"
+        info "褰撳墠鏈畨瑁呬换浣曞崗璁紝鏃犺闃呬俊鎭彲鏄剧ず銆?"
     fi
 }
 
-# --- 核心安装逻辑函数 ---
+# --- 鏍稿績瀹夎閫昏緫鍑芥暟 ---
 run_install_vless() {
     local port="$1" uuid="$2" domain="$3"
     if [[ -z "$(get_public_ip)" ]]; then
-        error "无法获取公网 IP 地址，安装中止。请检查您的网络连接。"
+        error "鏃犳硶鑾峰彇鍏綉 IP 鍦板潃锛屽畨瑁呬腑姝€傝妫€鏌ユ偍鐨勭綉缁滆繛鎺ャ€?"
         exit 1
     fi
     run_core_install || exit 1
 
-    info "正在生成 Reality 密钥对..."
+    info "姝ｅ湪鐢熸垚 Reality 瀵嗛挜瀵?.."
     local key_pair private_key public_key shortid vless_inbound
     key_pair=$(generate_reality_keypair) || exit 1
     private_key=$(echo "$key_pair" | sed -n '1p')
@@ -1513,7 +1514,7 @@ run_install_vless() {
     shortid=$(generate_shortid)
 
     if [[ -z "$private_key" || -z "$public_key" ]]; then
-        error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
+        error "鐢熸垚 Reality 瀵嗛挜瀵瑰け璐ワ紒璇锋鏌?Xray 鏍稿績鏄惁姝ｅ父锛屾垨灏濊瘯鍗歌浇鍚庨噸瑁呫€?"
         exit 1
     fi
 
@@ -1521,14 +1522,14 @@ run_install_vless() {
     write_config "[$vless_inbound]"
     if ! restart_xray; then exit 1; fi
 
-    success "VLESS-Reality 安装成功！（shortId 已随机生成）"
+    success "VLESS-Reality 瀹夎鎴愬姛锛侊紙shortId 宸查殢鏈虹敓鎴愶級"
     view_all_info
 }
 
 run_install_ss() {
     local port="$1" password="$2"
     if [[ -z "$(get_public_ip)" ]]; then
-        error "无法获取公网 IP 地址，安装中止。请检查您的网络连接。"
+        error "鏃犳硶鑾峰彇鍏綉 IP 鍦板潃锛屽畨瑁呬腑姝€傝妫€鏌ユ偍鐨勭綉缁滆繛鎺ャ€?"
         exit 1
     fi
     run_core_install || exit 1
@@ -1538,19 +1539,19 @@ run_install_ss() {
     write_config "[$ss_inbound]"
     if ! restart_xray; then exit 1; fi
 
-    success "Shadowsocks-2022 安装成功！"
+    success "Shadowsocks-2022 瀹夎鎴愬姛锛?"
     view_all_info
 }
 
 run_install_dual() {
     local vless_port="$1" vless_uuid="$2" vless_domain="$3" ss_port="$4" ss_password="$5"
     if [[ -z "$(get_public_ip)" ]]; then
-        error "无法获取公网 IP 地址，安装中止。请检查您的网络连接。"
+        error "鏃犳硶鑾峰彇鍏綉 IP 鍦板潃锛屽畨瑁呬腑姝€傝妫€鏌ユ偍鐨勭綉缁滆繛鎺ャ€?"
         exit 1
     fi
     run_core_install || exit 1
 
-    info "正在生成 Reality 密钥对..."
+    info "姝ｅ湪鐢熸垚 Reality 瀵嗛挜瀵?.."
     local key_pair private_key public_key shortid vless_inbound ss_inbound
     key_pair=$(generate_reality_keypair) || exit 1
     private_key=$(echo "$key_pair" | sed -n '1p')
@@ -1558,7 +1559,7 @@ run_install_dual() {
     shortid=$(generate_shortid)
 
     if [[ -z "$private_key" || -z "$public_key" ]]; then
-        error "生成 Reality 密钥对失败！请检查 Xray 核心是否正常，或尝试卸载后重装。"
+        error "鐢熸垚 Reality 瀵嗛挜瀵瑰け璐ワ紒璇锋鏌?Xray 鏍稿績鏄惁姝ｅ父锛屾垨灏濊瘯鍗歌浇鍚庨噸瑁呫€?"
         exit 1
     fi
 
@@ -1567,11 +1568,11 @@ run_install_dual() {
     write_config "[$vless_inbound, $ss_inbound]"
     if ! restart_xray; then exit 1; fi
 
-    success "双协议安装成功！（Reality shortId 已随机生成）"
+    success "鍙屽崗璁畨瑁呮垚鍔燂紒锛圧eality shortId 宸查殢鏈虹敓鎴愶級"
     view_all_info
 }
 
-# --- 主菜单与脚本入口 ---
+# --- 涓昏彍鍗曚笌鑴氭湰鍏ュ彛 ---
 is_port_available() {
     local port="$1"
     is_valid_port "$port" || return 1
@@ -1584,7 +1585,7 @@ is_port_available() {
         local proto="TCP/UDP"
         [[ "$tcp_in_use" = true && "$udp_in_use" = false ]] && proto="TCP"
         [[ "$tcp_in_use" = false && "$udp_in_use" = true ]] && proto="UDP"
-        warning "端口 $port 已被 ${proto} 占用，建议选择其他端口"
+        warning "绔彛 $port 宸茶 ${proto} 鍗犵敤锛屽缓璁€夋嫨鍏朵粬绔彛"
         return 1
     fi
 
@@ -1601,29 +1602,29 @@ prompt_for_ss_config() {
     local default_port="${3:-8388}"
 
     while true; do
-        read -r -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}${default_port}${none}): ")" p_port || true
+        read -r -p "$(echo -e " -> 璇疯緭鍏?Shadowsocks 绔彛 (榛樿: ${cyan}${default_port}${none}): ")" p_port || true
         [[ -z "$p_port" ]] && p_port="$default_port"
         if is_port_available "$p_port"; then break; fi
     done
-    info "Shadowsocks 端口将使用 ${cyan}${p_port}${none}"
+    info "Shadowsocks 绔彛灏嗕娇鐢?${cyan}${p_port}${none}"
 
-    prompt_for_ss_password p_pass "" "$(echo -e " -> 请输入 Shadowsocks 密钥 (留空将自动生成): ")"
+    prompt_for_ss_password p_pass "" "$(echo -e " -> 璇疯緭鍏?Shadowsocks 瀵嗛挜 (鐣欑┖灏嗚嚜鍔ㄧ敓鎴?: ")"
 }
 
 modify_ss_config() {
-    info "开始修改 Shadowsocks-2022 配置..."
+    info "寮€濮嬩慨鏀?Shadowsocks-2022 閰嶇疆..."
     local ss_inbound current_port current_password port password new_ss_inbound vless_inbound new_inbounds
     ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path")
     current_port=$(echo "$ss_inbound" | jq -r '.port')
     current_password=$(echo "$ss_inbound" | jq -r '.settings.password')
 
     while true; do
-        read -r -p "$(echo -e " -> 新端口 (当前: ${cyan}${current_port}${none}, 留空不改): ")" port || true
+        read -r -p "$(echo -e " -> 鏂扮鍙?(褰撳墠: ${cyan}${current_port}${none}, 鐣欑┖涓嶆敼): ")" port || true
         [[ -z "$port" ]] && port="$current_port"
         if is_port_available "$port" || [[ "$port" == "$current_port" ]]; then break; fi
     done
 
-    prompt_for_ss_password password "$current_password" "$(echo -e " -> 新密钥 (当前: ${cyan}${current_password}${none}, 留空不改): ")"
+    prompt_for_ss_password password "$current_password" "$(echo -e " -> 鏂板瘑閽?(褰撳墠: ${cyan}${current_password}${none}, 鐣欑┖涓嶆敼): ")"
 
     new_ss_inbound=$(build_ss_inbound "$port" "$password")
     vless_inbound=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path" 2>/dev/null || true)
@@ -1632,7 +1633,7 @@ modify_ss_config() {
 
     write_config "$new_inbounds"
     if ! restart_xray; then return 1; fi
-    success "配置修改成功！"
+    success "閰嶇疆淇敼鎴愬姛锛?"
     view_all_info
 }
 
@@ -1640,7 +1641,7 @@ execute_official_script() {
     local args="$1" script_content="" curl_rc=0 pid
     script_content=$(curl -fsSL "$xray_install_script_url" 2>/dev/null) || curl_rc=$?
     if [[ "$curl_rc" -ne 0 || -z "$script_content" || ! "$script_content" =~ install-release ]]; then
-        error "下载 Xray 官方安装脚本失败或内容异常！请检查网络连接。"
+        error "涓嬭浇 Xray 瀹樻柟瀹夎鑴氭湰澶辫触鎴栧唴瀹瑰紓甯革紒璇锋鏌ョ綉缁滆繛鎺ャ€?"
         return 1
     fi
 
@@ -1652,63 +1653,63 @@ execute_official_script() {
 
 update_xray() {
     detect_xray_binary >/dev/null 2>&1 || true
-    if [[ ! -f "$XRAY_BIN" ]]; then error "错误: Xray 未安装。" && return; fi
-    info "正在检查最新版本..."
+    if [[ ! -f "$XRAY_BIN" ]]; then error "閿欒: Xray 鏈畨瑁呫€?" && return; fi
+    info "姝ｅ湪妫€鏌ユ渶鏂扮増鏈?.."
 
     local current_version latest_version yn
     current_version=$("$XRAY_BIN" version 2>/dev/null | head -n 1 | awk '{print $2}' || true)
     current_version=$(echo -n "$current_version" | tr -d '\r\n')
-    [[ -z "$current_version" ]] && current_version="未知"
+    [[ -z "$current_version" ]] && current_version="鏈煡"
 
     latest_version=$(curl -fsSL --max-time 8 https://api.github.com/repos/XTLS/Xray-core/releases/latest 2>/dev/null \
         | jq -r '.tag_name' 2>/dev/null \
         | sed 's/^v//' || true)
 
     if [[ -z "$latest_version" || "$latest_version" == "null" ]]; then
-        warning "获取最新版本号失败（可能是网络/DNS 或 GitHub API 限流）。"
-        echo -e "  当前版本: ${cyan}${current_version}${none}"
-        read -r -p "  是否仍然尝试执行官方更新脚本？[Y/n]: " yn || true
+        warning "鑾峰彇鏈€鏂扮増鏈彿澶辫触锛堝彲鑳芥槸缃戠粶/DNS 鎴?GitHub API 闄愭祦锛夈€?"
+        echo -e "  褰撳墠鐗堟湰: ${cyan}${current_version}${none}"
+        read -r -p "  鏄惁浠嶇劧灏濊瘯鎵ц瀹樻柟鏇存柊鑴氭湰锛焄Y/n]: " yn || true
         if [[ "$yn" =~ ^[nN]$ ]]; then
-            info "已取消更新。"
+            info "宸插彇娑堟洿鏂般€?"
             return 0
         fi
-        info "开始执行官方更新脚本..."
+        info "寮€濮嬫墽琛屽畼鏂规洿鏂拌剼鏈?.."
         if ! run_core_install; then return 1; fi
         restart_xray || return 1
-        success "Xray 更新流程已执行完成（版本号请回到主菜单查看）。"
+        success "Xray 鏇存柊娴佺▼宸叉墽琛屽畬鎴愶紙鐗堟湰鍙疯鍥炲埌涓昏彍鍗曟煡鐪嬶級銆?"
         return 0
     fi
 
-    info "当前版本: ${cyan}${current_version}${none}，最新版本: ${cyan}${latest_version}${none}"
+    info "褰撳墠鐗堟湰: ${cyan}${current_version}${none}锛屾渶鏂扮増鏈? ${cyan}${latest_version}${none}"
     if [[ "$current_version" == "$latest_version" ]]; then
-        success "您的 Xray 已是最新版本。"
+        success "鎮ㄧ殑 Xray 宸叉槸鏈€鏂扮増鏈€?"
         return 0
     fi
 
-    info "发现新版本，开始更新..."
+    info "鍙戠幇鏂扮増鏈紝寮€濮嬫洿鏂?.."
     if ! run_core_install; then return 1; fi
     if ! restart_xray; then return 1; fi
-    success "Xray 更新成功！"
+    success "Xray 鏇存柊鎴愬姛锛?"
 }
 
 main_menu() {
     while true; do
         draw_menu_header
-        printf "  ${green}%-2s${none} %-35s\n" "1." "安装 Xray (VLESS/Shadowsocks)"
-        printf "  ${cyan}%-2s${none} %-35s\n" "2." "更新 Xray"
-        printf "  ${red}%-2s${none} %-35s\n" "3." "卸载 Xray"
+        printf "  ${green}%-2s${none} %-35s\n" "1." "瀹夎 Xray (VLESS/Shadowsocks)"
+        printf "  ${cyan}%-2s${none} %-35s\n" "2." "鏇存柊 Xray"
+        printf "  ${red}%-2s${none} %-35s\n" "3." "鍗歌浇 Xray"
         draw_divider
-        printf "  ${yellow}%-2s${none} %-35s\n" "4." "修改配置"
-        printf "  ${cyan}%-2s${none} %-35s\n" "5." "重启 Xray"
-        printf "  ${magenta}%-2s${none} %-35s\n" "6." "查看 Xray 日志"
-        printf "  ${green}%-2s${none} %-35s\n" "7." "查看订阅信息"
+        printf "  ${yellow}%-2s${none} %-35s\n" "4." "淇敼閰嶇疆"
+        printf "  ${cyan}%-2s${none} %-35s\n" "5." "閲嶅惎 Xray"
+        printf "  ${magenta}%-2s${none} %-35s\n" "6." "鏌ョ湅 Xray 鏃ュ織"
+        printf "  ${green}%-2s${none} %-35s\n" "7." "鏌ョ湅璁㈤槄淇℃伅"
         draw_divider
-        printf "  ${cyan}%-2s${none} %-35s\n" "8." "更新脚本 (x.sh)"
-        printf "  ${blue}%-2s${none} %-35s\n" "9." "BBR/网络智能优化"
-        printf "  ${yellow}%-2s${none} %-35s\n" "0." "退出脚本"
+        printf "  ${cyan}%-2s${none} %-35s\n" "8." "鏇存柊鑴氭湰 (x.sh)"
+        printf "  ${blue}%-2s${none} %-35s\n" "9." "BBR/缃戠粶鏅鸿兘浼樺寲"
+        printf "  ${yellow}%-2s${none} %-35s\n" "0." "閫€鍑鸿剼鏈?"
         draw_divider
 
-        read -r -p " 请输入选项 [0-9]: " choice || true
+        read -r -p " 璇疯緭鍏ラ€夐」 [0-9]: " choice || true
         local needs_pause=true
 
         case "$choice" in
@@ -1721,8 +1722,8 @@ main_menu() {
             7) view_all_info ;;
             8) update_script ;;
             9) bbr_menu; needs_pause=false ;;
-            0) success "感谢使用！"; exit 0 ;;
-            *) error "无效选项。请输入0到9之间的数字。" ;;
+            0) success "鎰熻阿浣跨敤锛?"; exit 0 ;;
+            *) error "鏃犳晥閫夐」銆傝杈撳叆0鍒?涔嬮棿鐨勬暟瀛椼€? ";;
         esac
 
         if [[ "$needs_pause" = true ]]; then press_any_key_to_continue; fi
