@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env bash
+#!/usr/bin/env bash
 
 # ==============================================================================
 # Xray VLESS-Reality & Shadowsocks 2022 绠＄悊鑴氭湰 (x.sh)
