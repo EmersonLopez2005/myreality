@@ -19,9 +19,13 @@ readonly xray_config_path="/usr/local/etc/xray/config.json"
 readonly xray_binary_path="/usr/local/bin/xray"
 readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/install-release.sh"
 
+# --- BBR / 网络优化 ---
+readonly BBR_CONF_FILE="/etc/sysctl.d/99-bbr.conf"
+readonly BBR_MODULE_VERSION="bbr-module v1.1.0"
+
 # --- 颜色定义 ---
 readonly red='\e[91m' green='\e[92m' yellow='\e[93m'
-readonly magenta='\e[95m' cyan='\e[96m' none='\e[0m'
+readonly magenta='\e[95m' cyan='\e[96m' blue='\e[94m' none='\e[0m'
 
 # --- 全局变量 ---
 xray_status_info=""
@@ -230,6 +234,485 @@ generate_shortid() {
 # --- 核心配置生成函数 ---
 generate_ss_key() {
     openssl rand -base64 16
+}
+
+# ==============================================================================
+# BBR / Linux 网络参数智能优化（融合 script.sh 的逻辑，增加可回滚/可查看状态）
+# ==============================================================================
+
+# --- BBR 全局变量（统一使用 BBR_ 前缀，避免与主脚本变量冲突） ---
+BBR_TOTAL_MEM=""
+BBR_CPU_CORES=""
+BBR_VIRT_TYPE=""
+BBR_VM_TIER=""
+BBR_RMEM_MAX=""
+BBR_WMEM_MAX=""
+BBR_TCP_MEM_MAX=""
+BBR_SOMAXCONN=""
+BBR_FILE_MAX=""
+BBR_CONNTRACK_MAX=""
+
+# 运行时选择的优化策略（均衡/高并发/省内存）
+BBR_PROFILE="balanced"
+BBR_TW_REUSE="1"
+
+bbr_get_system_info() {
+    BBR_TOTAL_MEM=$(free -m | awk '/^Mem:/{print $2}' | tr -d '\r')
+    BBR_CPU_CORES=$(nproc | tr -d '\r')
+
+    if command -v systemd-detect-virt >/dev/null 2>&1; then
+        BBR_VIRT_TYPE=$(systemd-detect-virt)
+    elif grep -q -i "hypervisor" /proc/cpuinfo; then
+        BBR_VIRT_TYPE="KVM/VMware"
+    else
+        BBR_VIRT_TYPE="Physical/Unknown"
+    fi
+
+    bbr_calculate_parameters
+}
+
+bbr_calculate_parameters() {
+    # 基础连接数设置 - 代理服务器通常需要更多连接跟踪
+    if [[ "${BBR_TOTAL_MEM:-0}" -le 512 ]]; then
+        BBR_VM_TIER="入门级(≤512MB)"
+        BBR_RMEM_MAX="16777216"   # 16MB
+        BBR_WMEM_MAX="16777216"
+        BBR_TCP_MEM_MAX="16777216"
+        BBR_SOMAXCONN="4096"
+        BBR_FILE_MAX="65535"
+        BBR_CONNTRACK_MAX="65536"
+    elif [[ "${BBR_TOTAL_MEM:-0}" -le 1024 ]]; then
+        BBR_VM_TIER="基础级(1GB)"
+        BBR_RMEM_MAX="33554432"   # 32MB
+        BBR_WMEM_MAX="33554432"
+        BBR_TCP_MEM_MAX="33554432"
+        BBR_SOMAXCONN="16384"
+        BBR_FILE_MAX="524288"
+        BBR_CONNTRACK_MAX="262144"
+    elif [[ "${BBR_TOTAL_MEM:-0}" -le 4096 ]]; then
+        BBR_VM_TIER="进阶级(2GB-4GB)"
+        BBR_RMEM_MAX="67108864"   # 64MB
+        BBR_WMEM_MAX="67108864"
+        BBR_TCP_MEM_MAX="67108864"
+        BBR_SOMAXCONN="32768"
+        BBR_FILE_MAX="1048576"
+        BBR_CONNTRACK_MAX="524288"
+    else
+        BBR_VM_TIER="专业级(>4GB)"
+        # 限制最大缓冲区，避免单连接吃光内存，注重并发总量
+        BBR_RMEM_MAX="134217728"  # 128MB
+        BBR_WMEM_MAX="134217728"
+        BBR_TCP_MEM_MAX="134217728"
+        BBR_SOMAXCONN="65535"
+        BBR_FILE_MAX="2097152"
+        BBR_CONNTRACK_MAX="1048576" # 100万连接通常足够
+    fi
+}
+
+bbr_pre_flight_checks() {
+    [[ $(id -u) -ne 0 ]] && error "❌ 错误: 必须 root 权限。" && return 1
+    # 尝试加载必要内核模块（失败不致命：容器环境或精简内核可能不允许）
+    modprobe nf_conntrack >/dev/null 2>&1 || true
+    modprobe tcp_bbr >/dev/null 2>&1 || true
+    return 0
+}
+
+bbr_add_conf() {
+    # 用法: bbr_add_conf <file> <key> <value> <comment>
+    local file="$1" key="$2" value="$3" comment="$4"
+    {
+        echo "# $comment"
+        echo "$key = $value"
+        echo ""
+    } >> "$file"
+}
+
+bbr_manage_backups() {
+    if [[ -f "$BBR_CONF_FILE" ]]; then
+        cp "$BBR_CONF_FILE" "$BBR_CONF_FILE.bak_$(date +%F_%H-%M-%S)"
+        # 保留最近 3 个备份
+        ls -t "$BBR_CONF_FILE.bak_"* 2>/dev/null | tail -n +4 | xargs -r rm
+    fi
+}
+
+bbr_clamp_int() {
+    # bbr_clamp_int <val> <min> <max>
+    local v="$1" min="$2" max="$3"
+    [[ -z "$v" ]] && v=0
+    if (( v < min )); then v="$min"; fi
+    if (( v > max )); then v="$max"; fi
+    echo "$v"
+}
+
+bbr_scale_int() {
+    # bbr_scale_int <val> <num> <den>
+    local v="$1" num="$2" den="$3"
+    if [[ -z "$v" || -z "$num" || -z "$den" || "$den" == "0" ]]; then
+        echo "$v"
+        return
+    fi
+    echo $(( v * num / den ))
+}
+
+bbr_apply_profile_tuning() {
+    # 根据选择的 profile 对基础参数做倍率调整，并做上下限保护。
+    # profile:
+    #   balanced        默认均衡
+    #   high_concurrency 偏高并发（更多连接/队列/句柄/conntrack）
+    #   memory_saving    偏省内存（更保守的 conntrack/缓冲区/队列）
+    local profile="$1"
+
+    case "$profile" in
+        high_concurrency)
+            # 连接/队列/句柄上调（但仍限制上限，避免夸张参数）
+            BBR_SOMAXCONN=$(bbr_scale_int "$BBR_SOMAXCONN" 2 1)
+            BBR_FILE_MAX=$(bbr_scale_int "$BBR_FILE_MAX" 2 1)
+            BBR_CONNTRACK_MAX=$(bbr_scale_int "$BBR_CONNTRACK_MAX" 2 1)
+
+            # 缓冲区轻微上调（避免极端占用内存）
+            BBR_RMEM_MAX=$(bbr_scale_int "$BBR_RMEM_MAX" 3 2)
+            BBR_WMEM_MAX=$(bbr_scale_int "$BBR_WMEM_MAX" 3 2)
+            BBR_TCP_MEM_MAX=$(bbr_scale_int "$BBR_TCP_MEM_MAX" 3 2)
+            ;;
+        memory_saving)
+            # 更保守：减少 conntrack / 队列 / 缓冲区，降低内存占用风险
+            BBR_SOMAXCONN=$(bbr_scale_int "$BBR_SOMAXCONN" 1 2)
+            BBR_FILE_MAX=$(bbr_scale_int "$BBR_FILE_MAX" 1 2)
+            BBR_CONNTRACK_MAX=$(bbr_scale_int "$BBR_CONNTRACK_MAX" 1 2)
+            BBR_RMEM_MAX=$(bbr_scale_int "$BBR_RMEM_MAX" 1 2)
+            BBR_WMEM_MAX=$(bbr_scale_int "$BBR_WMEM_MAX" 1 2)
+            BBR_TCP_MEM_MAX=$(bbr_scale_int "$BBR_TCP_MEM_MAX" 1 2)
+            ;;
+        *)
+            : # balanced
+            ;;
+    esac
+
+    # 下限保护：太小会影响基本可用性
+    BBR_SOMAXCONN=$(bbr_clamp_int "$BBR_SOMAXCONN" 4096 262144)
+    BBR_FILE_MAX=$(bbr_clamp_int "$BBR_FILE_MAX" 65535 8388608)
+    BBR_CONNTRACK_MAX=$(bbr_clamp_int "$BBR_CONNTRACK_MAX" 65536 2097152)
+
+    # 缓冲区保护：过大可能导致单连接/少量连接吃掉太多内存
+    BBR_RMEM_MAX=$(bbr_clamp_int "$BBR_RMEM_MAX" 8388608 268435456)   # 8MB - 256MB
+    BBR_WMEM_MAX=$(bbr_clamp_int "$BBR_WMEM_MAX" 8388608 268435456)
+    BBR_TCP_MEM_MAX=$(bbr_clamp_int "$BBR_TCP_MEM_MAX" 8388608 268435456)
+}
+
+bbr_profile_label() {
+    case "$1" in
+        high_concurrency) echo "高并发" ;;
+        memory_saving) echo "省内存" ;;
+        *) echo "均衡" ;;
+    esac
+}
+
+bbr_prompt_profile() {
+    local choice
+    echo -e "${cyan}请选择优化模式${none}"
+    draw_divider
+    printf "  ${green}%-2s${none} %-35s\n" "1." "均衡 (默认推荐)"
+    printf "  ${yellow}%-2s${none} %-35s\n" "2." "高并发 (更多连接/队列/conntrack)"
+    printf "  ${magenta}%-2s${none} %-35s\n" "3." "省内存 (更保守，适合小鸡/容器)"
+    draw_divider
+    read -r -p " 请输入选项 [1-3，默认1]: " choice || true
+    case "$choice" in
+        2) BBR_PROFILE="high_concurrency" ;;
+        3) BBR_PROFILE="memory_saving" ;;
+        *) BBR_PROFILE="balanced" ;;
+    esac
+
+    read -r -p "  是否开启 tcp_tw_reuse (高并发优化，默认开启) [Y/n]: " choice || true
+    if [[ "$choice" =~ ^[nN]$ ]]; then
+        BBR_TW_REUSE="0"
+    else
+        BBR_TW_REUSE="1"
+    fi
+}
+
+bbr_build_conf_file() {
+    # 原子写入：生成临时文件，写完后由调用方 mv 覆盖。
+    # 输出: 临时文件路径（echo）
+    local profile="$1" tw_reuse="$2"
+    bbr_get_system_info
+    bbr_apply_profile_tuning "$profile"
+
+    local tmp
+    tmp=$(mktemp "${BBR_CONF_FILE}.tmp.XXXXXX")
+
+    cat >> "$tmp" << EOF
+# ==========================================================
+# Linux Network Tuning (Proxy/Forwarding Optimized)
+# 生成时间: $(date)
+# 硬件环境: ${BBR_TOTAL_MEM}MB RAM, ${BBR_CPU_CORES} CPU
+# 虚拟化  : ${BBR_VIRT_TYPE}
+# 档位    : ${BBR_VM_TIER}
+# 模式    : $(bbr_profile_label "$profile") (${profile})
+# 模块版本: ${BBR_MODULE_VERSION}
+# ==========================================================
+EOF
+
+    # 0) 能力探测（更友好）
+    local available_cc
+    available_cc=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || true)
+    if ! echo " $available_cc " | grep -q " bbr "; then
+        warning "系统未检测到可用的 BBR 拥塞算法（available: ${available_cc:-未知}）。仍会写入配置，但可能不会生效。"
+    fi
+
+    # 1) BBR 与队列算法
+    bbr_add_conf "$tmp" "net.core.default_qdisc" "fq" "FQ 队列算法 (BBR 常用搭配)"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_congestion_control" "bbr" "开启 BBR"
+
+    # 2) 缓冲区优化 (TCP & UDP)
+    bbr_add_conf "$tmp" "net.core.rmem_max" "$BBR_RMEM_MAX" "系统最大接收缓存"
+    bbr_add_conf "$tmp" "net.core.wmem_max" "$BBR_WMEM_MAX" "系统最大发送缓存"
+    bbr_add_conf "$tmp" "net.core.rmem_default" "262144" "默认接收缓存 (256k)"
+    bbr_add_conf "$tmp" "net.core.wmem_default" "262144" "默认发送缓存 (256k)"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_rmem" "8192 262144 $BBR_TCP_MEM_MAX" "TCP读缓存 (min default max)"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_wmem" "8192 262144 $BBR_TCP_MEM_MAX" "TCP写缓存 (min default max)"
+    bbr_add_conf "$tmp" "net.ipv4.udp_rmem_min" "16384" "UDP读缓存下限 (优化QUIC)"
+    bbr_add_conf "$tmp" "net.ipv4.udp_wmem_min" "16384" "UDP写缓存下限 (优化QUIC)"
+
+    # 3) 连接与队列上限
+    bbr_add_conf "$tmp" "net.core.somaxconn" "$BBR_SOMAXCONN" "最大监听队列"
+    bbr_add_conf "$tmp" "net.core.netdev_max_backlog" "$BBR_SOMAXCONN" "网卡积压队列"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_max_syn_backlog" "$BBR_SOMAXCONN" "SYN半连接队列"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_notsent_lowat" "16384" "降低未发送数据阈值 (降低延迟)"
+
+    # 4) TIME_WAIT 与 端口复用
+    bbr_add_conf "$tmp" "net.ipv4.tcp_tw_reuse" "$tw_reuse" "开启 TIME_WAIT 复用 (高并发优化，可按需关闭)"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_timestamps" "1" "开启时间戳 (配合 reuse)"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_fin_timeout" "30" "缩短 FIN_WAIT 时间"
+    bbr_add_conf "$tmp" "net.ipv4.ip_local_port_range" "10000 65535" "扩大本地端口范围"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_max_tw_buckets" "500000" "允许更多 TIME_WAIT socket"
+
+    # 5) TCP Keepalive
+    bbr_add_conf "$tmp" "net.ipv4.tcp_keepalive_time" "600" "TCP保活时间 (10分钟)"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_keepalive_intvl" "15" "探测间隔"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_keepalive_probes" "5" "探测次数"
+
+    # 6) Conntrack
+    bbr_add_conf "$tmp" "net.netfilter.nf_conntrack_max" "$BBR_CONNTRACK_MAX" "最大连接跟踪数 (过大可能吃内存)"
+    bbr_add_conf "$tmp" "net.netfilter.nf_conntrack_tcp_timeout_established" "7200" "连接跟踪超时 (2小时)"
+    bbr_add_conf "$tmp" "net.netfilter.nf_conntrack_tcp_timeout_time_wait" "120" "减少 TIME_WAIT 跟踪时间"
+
+    # 7) 其他系统级优化
+    bbr_add_conf "$tmp" "fs.file-max" "$BBR_FILE_MAX" "最大文件句柄"
+    bbr_add_conf "$tmp" "vm.swappiness" "10" "减少 Swap 使用"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_mtu_probing" "1" "开启 MTU 探测"
+    bbr_add_conf "$tmp" "net.ipv4.tcp_syncookies" "1" "防 SYN Flood"
+
+    echo "$tmp"
+}
+
+bbr_apply_sysctl_from_file() {
+    # 逐项应用并汇总结果，避免某个参数失败导致全部失败
+    local file="$1"
+    local ok=0 missing=0 denied=0 invalid=0
+    local -a failed_lines=()
+    local -a missing_keys=()
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" ]] && continue
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+
+        if [[ "$line" =~ ^[[:space:]]*([a-zA-Z0-9_.]+)[[:space:]]*=[[:space:]]*(.+)[[:space:]]*$ ]]; then
+            local key="${BASH_REMATCH[1]}"
+            local value="${BASH_REMATCH[2]}"
+            local out rc
+
+            out=$(sysctl -w "${key}=${value}" 2>&1) || rc=$?
+            rc=${rc:-0}
+
+            if [[ "$rc" -eq 0 ]]; then
+                ((ok++))
+            else
+                # 分类统计（尽力而为）
+                if echo "$out" | grep -qiE "No such file|not found"; then
+                    ((missing++))
+                    missing_keys+=("$key")
+                elif echo "$out" | grep -qiE "permission denied|Operation not permitted"; then
+                    ((denied++))
+                elif echo "$out" | grep -qiE "Invalid argument"; then
+                    ((invalid++))
+                else
+                    ((invalid++))
+                fi
+                failed_lines+=("$key=$value -> $out")
+            fi
+        fi
+    done < "$file"
+
+    echo "$ok|$missing|$denied|$invalid"
+    # 将失败详情写到 stderr（交互模式下也能看到）
+    if ((${#failed_lines[@]} > 0)); then
+        {
+            echo -e "\n${yellow}以下参数未能成功应用（不一定影响核心功能）：${none}"
+            for l in "${failed_lines[@]}"; do
+                echo "  - $l"
+            done
+        } >&2
+    fi
+}
+
+bbr_detect_primary_iface() {
+    ip route 2>/dev/null | awk '/default/ {print $5; exit}'
+}
+
+bbr_apply_optimizations() {
+    # 新逻辑：原子写入 + 逐项 sysctl 应用 + 汇总失败项 + 支持 profile
+    local profile="$1" tw_reuse="$2"
+
+    bbr_get_system_info
+    bbr_apply_profile_tuning "$profile"
+
+    [[ "$is_quiet" = false ]] && {
+        echo -e "${cyan}>>> 系统信息检测：${none}"
+        echo -e "内存大小   : ${yellow}${BBR_TOTAL_MEM}MB${none}"
+        echo -e "CPU核心数  : ${yellow}${BBR_CPU_CORES}${none}"
+        echo -e "虚拟化类型 : ${yellow}${BBR_VIRT_TYPE}${none}"
+        echo -e "目标档位   : ${yellow}${BBR_VM_TIER}${none}"
+        echo -e "优化模式   : ${yellow}$(bbr_profile_label "$profile")${none}"
+    }
+
+    info "生成并应用网络优化配置 (${BBR_VM_TIER} / $(bbr_profile_label "$profile"))..."
+    mkdir -p "$(dirname "$BBR_CONF_FILE")"
+
+    # 原子写：先写 tmp，再 mv 覆盖
+    local tmp
+    tmp=$(bbr_build_conf_file "$profile" "$tw_reuse")
+    chmod 644 "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$BBR_CONF_FILE"
+
+    info "正在逐项应用 sysctl 参数（可跳过不支持的键）..."
+    local summary ok missing denied invalid cc qdisc reuse iface tcq
+    summary=$(bbr_apply_sysctl_from_file "$BBR_CONF_FILE")
+    ok=${summary%%|*}; summary=${summary#*|}
+    missing=${summary%%|*}; summary=${summary#*|}
+    denied=${summary%%|*}; invalid=${summary#*|}
+
+    cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "未知")
+    qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "未知")
+    reuse=$(sysctl -n net.ipv4.tcp_tw_reuse 2>/dev/null || echo "未知")
+
+    iface=$(bbr_detect_primary_iface || true)
+    if command -v tc >/dev/null 2>&1 && [[ -n "$iface" ]]; then
+        tcq=$(tc qdisc show dev "$iface" 2>/dev/null | head -n 1 || true)
+    else
+        tcq=""
+    fi
+
+    success "网络优化完成！"
+    echo -e "已应用: ${green}${ok}${none} 项 | 不存在: ${yellow}${missing}${none} 项 | 权限/受限: ${yellow}${denied}${none} 项 | 其它失败: ${yellow}${invalid}${none} 项"
+    echo -e "拥塞控制: ${cyan}${cc}${none} | 队列算法: ${cyan}${qdisc}${none} | tcp_tw_reuse: ${cyan}${reuse}${none}"
+    [[ -n "$tcq" ]] && echo -e "网卡队列(tc): ${cyan}${tcq}${none}"
+}
+
+bbr_apply_and_verify() {
+    # 兼容旧调用点（保留函数名），实际逻辑已在 bbr_apply_optimizations 中完成
+    :
+}
+
+bbr_uninstall() {
+    if [[ ! -f "$BBR_CONF_FILE" ]]; then
+        warning "未发现 $BBR_CONF_FILE，无需卸载。"
+        return 0
+    fi
+
+    info "正在卸载/回滚 BBR 网络优化配置..."
+    mv -f "$BBR_CONF_FILE" "$BBR_CONF_FILE.removed_$(date +%F_%H-%M-%S)"
+    # 重载所有 sysctl.d（确保删除后生效）
+    sysctl --system >/dev/null 2>&1 || true
+    success "已移除优化配置（已保留 removed 备份）。"
+}
+
+bbr_status() {
+    draw_menu_header
+    echo -e "${cyan} BBR/网络优化状态${none}"
+    draw_divider
+    printf "  %-24s %s\n" "配置文件" "${BBR_CONF_FILE}"
+    if [[ -f "$BBR_CONF_FILE" ]]; then
+        printf "  %-24s %b\n" "是否存在" "${green}是${none}"
+    else
+        printf "  %-24s %b\n" "是否存在" "${red}否${none}"
+    fi
+
+    local cc qdisc available
+    cc=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null || echo "未知")
+    qdisc=$(sysctl -n net.core.default_qdisc 2>/dev/null || echo "未知")
+    available=$(sysctl -n net.ipv4.tcp_available_congestion_control 2>/dev/null || echo "未知")
+
+    printf "  %-24s %s\n" "当前拥塞控制" "${cc}"
+    printf "  %-24s %s\n" "可用拥塞控制" "${available}"
+    printf "  %-24s %s\n" "当前 qdisc" "${qdisc}"
+
+    # 展示用户常用的“BBR 是否生效”排查项（可选项，尽力输出）
+    echo ""
+    echo "  常用验证（可选）："
+
+    if command -v lsmod >/dev/null 2>&1; then
+        local mod_line
+        mod_line=$(lsmod 2>/dev/null | awk '$1=="tcp_bbr"{print; exit}')
+        if [[ -n "$mod_line" ]]; then
+            printf "  %-24s %s\n" "tcp_bbr 模块" "已加载 (lsmod 可见)"
+        else
+            printf "  %-24s %s\n" "tcp_bbr 模块" "lsmod 未显示（可能未加载/或已编译进内核）"
+        fi
+    else
+        printf "  %-24s %s\n" "tcp_bbr 模块" "无法检查（系统缺少 lsmod）"
+    fi
+
+    local iface tcq
+    iface=$(bbr_detect_primary_iface || true)
+    if [[ -n "$iface" ]]; then
+        printf "  %-24s %s\n" "默认出口网卡" "${iface}"
+        if command -v tc >/dev/null 2>&1; then
+            tcq=$(tc qdisc show dev "$iface" 2>/dev/null | head -n 1 || true)
+            [[ -n "$tcq" ]] && printf "  %-24s %s\n" "tc qdisc(网卡)" "${tcq}"
+        else
+            printf "  %-24s %s\n" "tc qdisc(网卡)" "无法检查（系统缺少 tc 命令）"
+        fi
+    else
+        printf "  %-24s %s\n" "默认出口网卡" "无法识别（ip route 无 default）"
+    fi
+    echo ""
+    echo "  关键参数："
+    sysctl net.ipv4.tcp_tw_reuse net.ipv4.tcp_timestamps net.core.somaxconn 2>/dev/null | sed 's/^/  /' || true
+    draw_divider
+}
+
+bbr_menu() {
+    while true; do
+        draw_menu_header
+        echo -e "${cyan} BBR / 网络智能优化 (${BBR_MODULE_VERSION})${none}"
+        draw_divider
+        printf "  ${green}%-2s${none} %-35s\n" "1." "一键开启/智能优化 (写入并应用 sysctl)"
+        printf "  ${yellow}%-2s${none} %-35s\n" "2." "查看当前状态/是否生效"
+        printf "  ${red}%-2s${none} %-35s\n" "3." "卸载/回滚 (移除配置文件)"
+        draw_divider
+        printf "  ${magenta}%-2s${none} %-35s\n" "0." "返回主菜单"
+        draw_divider
+        read -r -p " 请输入选项 [0-3]: " choice || true
+        case "$choice" in
+            1)
+                bbr_pre_flight_checks || { press_any_key_to_continue; continue; }
+                bbr_manage_backups
+                bbr_prompt_profile
+                bbr_apply_optimizations "$BBR_PROFILE" "$BBR_TW_REUSE"
+                press_any_key_to_continue
+                ;;
+            2)
+                bbr_status
+                press_any_key_to_continue
+                ;;
+            3)
+                bbr_uninstall
+                press_any_key_to_continue
+                ;;
+            0) return ;;
+            *) error "无效选项。"; press_any_key_to_continue ;;
+        esac
+    done
 }
 
 build_vless_inbound() {
@@ -893,10 +1376,11 @@ main_menu() {
         printf "  ${green}%-2s${none} %-35s\n" "7." "查看订阅信息"
         draw_divider
         printf "  ${cyan}%-2s${none} %-35s\n" "8." "更新脚本 (x.sh)"
+        printf "  ${blue}%-2s${none} %-35s\n" "9." "BBR/网络智能优化"
         printf "  ${yellow}%-2s${none} %-35s\n" "0." "退出脚本"
         draw_divider
 
-        read -r -p " 请输入选项 [0-8]: " choice || true
+        read -r -p " 请输入选项 [0-9]: " choice || true
         local needs_pause=true
 
         case "$choice" in
@@ -908,8 +1392,9 @@ main_menu() {
             6) view_xray_log; needs_pause=false ;;
             7) view_all_info ;;
             8) update_script ;;
+            9) bbr_menu; needs_pause=false ;;
             0) success "感谢使用！"; exit 0 ;;
-            *) error "无效选项。请输入0到8之间的数字。" ;;
+            *) error "无效选项。请输入0到9之间的数字。" ;;
         esac
 
         if [[ "$needs_pause" = true ]]; then press_any_key_to_continue; fi
