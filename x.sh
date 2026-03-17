@@ -10,7 +10,7 @@
 set -euo pipefail
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="x.sh v3.0.2"
+readonly SCRIPT_VERSION="x.sh v3.0.3"
 readonly SCRIPT_PATH="/root/x.sh"
 readonly SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/EmersonLopez2005/myreality/main/x.sh"
 
@@ -182,7 +182,12 @@ check_xray_status() {
         return
     fi
     local xray_version service_status
-    xray_version=$("$XRAY_BIN" version 2>/dev/null | head -n 1 | awk '{print $2}' || echo "未知")
+    # 某些环境下 `xray version` 可能会输出版本但返回非 0。
+    # 在 set -e 下会导致脚本提前退出，或版本字符串夹带换行/“未知”。
+    # 这里忽略返回码，并做清洗。
+    xray_version=$("$XRAY_BIN" version 2>/dev/null | head -n 1 | awk '{print $2}' || true)
+    xray_version=$(echo -n "$xray_version" | tr -d '\r\n')
+    [[ -z "$xray_version" ]] && xray_version="未知"
     if systemctl is-active --quiet xray 2>/dev/null; then
         service_status="${green}运行中${none}"
     else
@@ -1065,9 +1070,31 @@ update_xray() {
     if [[ ! -f "$XRAY_BIN" ]]; then error "错误: Xray 未安装。" && return; fi
     info "正在检查最新版本..."
     local current_version latest_version
-    current_version=$("$XRAY_BIN" version | head -n 1 | awk '{print $2}')
-    latest_version=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r '.tag_name' | sed 's/v//' || echo "")
-    [[ -z "$latest_version" ]] && error "获取最新版本号失败，请检查网络或稍后重试。" && return
+    # 同样忽略 version 的返回码，避免 set -e 直接退出
+    current_version=$("$XRAY_BIN" version 2>/dev/null | head -n 1 | awk '{print $2}' || true)
+    current_version=$(echo -n "$current_version" | tr -d '\r\n')
+    [[ -z "$current_version" ]] && current_version="未知"
+
+    # 获取最新版本可能因为网络/DNS/GitHub API 限流而失败。
+    # 失败时给出明确提示，并允许用户选择“仍然尝试执行官方更新脚本”。
+    latest_version=$(curl -fsSL --max-time 8 https://api.github.com/repos/XTLS/Xray-core/releases/latest 2>/dev/null \
+        | jq -r '.tag_name' 2>/dev/null \
+        | sed 's/^v//' || true)
+
+    if [[ -z "$latest_version" || "$latest_version" == "null" ]]; then
+        warning "获取最新版本号失败（可能是网络/DNS 或 GitHub API 限流）。"
+        echo -e "  当前版本: ${cyan}${current_version}${none}"
+        read -r -p "  是否仍然尝试执行官方更新脚本？[Y/n]: " yn || true
+        if [[ "$yn" =~ ^[nN]$ ]]; then
+            info "已取消更新。"
+            return 0
+        fi
+        info "开始执行官方更新脚本（不依赖 GitHub API 版本号查询）..."
+        run_core_install
+        restart_xray || return 1
+        success "Xray 更新流程已执行完成（版本号请回到主菜单查看）。"
+        return 0
+    fi
     info "当前版本: ${cyan}${current_version}${none}，最新版本: ${cyan}${latest_version}${none}"
     if [[ "$current_version" == "$latest_version" ]]; then success "您的 Xray 已是最新版本。" && return; fi
     info "发现新版本，开始更新..."
