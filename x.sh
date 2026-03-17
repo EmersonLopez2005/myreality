@@ -2,16 +2,15 @@
 
 # ==============================================================================
 # Xray VLESS-Reality & Shadowsocks 2022 管理脚本 (x.sh)
-# - 基于 install.sh (Final v2.9.2) 的交互逻辑重构 x.sh
+# - 交互逻辑重构 x.sh
 # - 移除旧版 x.sh 的“分流/YouTube/上游SS”等功能，仅保留：Reality + SS2022
 # - 保留快捷键入口：alias xray='bash /root/x.sh'
-# - 修复/增强：Reality shortId(你说的 shortkey) 每次创建/重装时随机生成
 # ==============================================================================
 
 set -euo pipefail
 
 # --- 全局常量 ---
-readonly SCRIPT_VERSION="x.sh v3.0.0"
+readonly SCRIPT_VERSION="x.sh v3.0.2"
 readonly SCRIPT_PATH="/root/x.sh"
 readonly SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/EmersonLopez2005/myreality/main/x.sh"
 
@@ -22,6 +21,9 @@ readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/
 # --- BBR / 网络优化 ---
 readonly BBR_CONF_FILE="/etc/sysctl.d/99-bbr.conf"
 readonly BBR_MODULE_VERSION="bbr-module v1.1.0"
+
+# --- 快捷命令 (alias/备用命令) ---
+readonly MENU_BIN_SYMLINK="/usr/local/bin/xray-menu"
 
 # --- 颜色定义 ---
 readonly red='\e[91m' green='\e[92m' yellow='\e[93m'
@@ -45,11 +47,26 @@ install_self() {
         chmod +x "$SCRIPT_PATH" 2>/dev/null || true
     fi
 
-    # 2) 写入 alias（仅写一次）
-    if ! grep -qs "alias xray='bash ${SCRIPT_PATH}'" ~/.bashrc; then
-        echo "alias xray='bash ${SCRIPT_PATH}'" >> ~/.bashrc
+    # 2) 写入 alias（仅写一次）：根据当前 shell 写入 bashrc/zshrc
+    #    注意：alias 需要重新打开终端或 source 对应 rc 文件才能生效。
+    local rc_file=""
+    case "${SHELL:-}" in
+        */zsh) rc_file="$HOME/.zshrc" ;;
+        *)     rc_file="$HOME/.bashrc" ;;
+    esac
+    if [[ -n "$rc_file" ]]; then
+        if ! grep -qs "alias xray='bash ${SCRIPT_PATH}'" "$rc_file" 2>/dev/null; then
+            echo "alias xray='bash ${SCRIPT_PATH}'" >> "$rc_file"
+        fi
     fi
-    # 尝试给当前 shell 生效（非关键）
+
+    # 3) 安装一个备用命令：/usr/local/bin/xray-menu
+    #    这样即使 alias 没加载，你也能直接输入 xray-menu 进入菜单。
+    mkdir -p "$(dirname "$MENU_BIN_SYMLINK")"
+    ln -sf "$SCRIPT_PATH" "$MENU_BIN_SYMLINK" 2>/dev/null || true
+    chmod +x "$MENU_BIN_SYMLINK" 2>/dev/null || true
+
+    # 4) 尝试给当前 shell 临时生效（仅本次会话；不保证所有环境有效）
     alias xray="bash ${SCRIPT_PATH}" 2>/dev/null || true
 }
 
@@ -142,9 +159,12 @@ pre_check() {
 }
 
 detect_xray_binary() {
-    # 优先使用 command -v，其次 fallback 到默认路径
-    if command -v xray &>/dev/null; then
-        XRAY_BIN="$(command -v xray)"
+    # 重要：不要用 `command -v xray`，因为它可能返回 alias/function（例如 alias xray='bash /root/x.sh'）
+    # 这里用 `type -P` 只取真实二进制路径。
+    local real
+    real=$(type -P xray 2>/dev/null || true)
+    if [[ -n "$real" ]]; then
+        XRAY_BIN="$real"
         return 0
     fi
     if [[ -x "$xray_binary_path" ]]; then
@@ -652,7 +672,9 @@ bbr_status() {
 
     if command -v lsmod >/dev/null 2>&1; then
         local mod_line
-        mod_line=$(lsmod 2>/dev/null | awk '$1=="tcp_bbr"{print; exit}')
+        # 注意：部分容器/精简系统中 lsmod 可能返回非 0（/proc/modules 不可用）。
+        # 在 set -e 环境下这会导致函数提前退出，所以这里用 || true 保底。
+        mod_line=$(lsmod 2>/dev/null | awk '$1=="tcp_bbr"{print; exit}' || true)
         if [[ -n "$mod_line" ]]; then
             printf "  %-24s %s\n" "tcp_bbr 模块" "已加载 (lsmod 可见)"
         else
