@@ -1491,13 +1491,13 @@ view_all_info() {
 
         if [[ "$is_quiet" = false ]]; then
             echo -e "${green}[ VLESS-Reality ]${none}"
-            printf "  %-14s %s\n" "节点名称" "$link_name_raw"
-            printf "  %-14s %s\n" "服务器地址" "$ip"
-            printf "  %-14s %s\n" "端口" "$port"
-            printf "  %-14s %s\n" "UUID" "$uuid"
-            printf "  %-14s %s\n" "SNI" "$domain"
-            printf "  %-14s %s\n" "PublicKey" "$public_key"
-            printf "  %-14s %s\n" "ShortId" "$shortid"
+            printf "  节点名称      ${cyan}%s${none}\n" "$link_name_raw"
+            printf "  服务器地址    ${cyan}%s${none}\n" "$ip"
+            printf "  端口          ${cyan}%s${none}\n" "$port"
+            printf "  UUID          ${cyan}%s${none}\n" "$uuid"
+            printf "  SNI           ${cyan}%s${none}\n" "$domain"
+            printf "  PublicKey     ${cyan}%s${none}\n" "$public_key"
+            printf "  ShortId       ${cyan}%s${none}\n" "$shortid"
         fi
     fi
 
@@ -1517,11 +1517,11 @@ view_all_info() {
         if [[ "$is_quiet" = false ]]; then
             echo ""
             echo -e "${green}[ Shadowsocks-2022 ]${none}"
-            printf "  %-14s %s\n" "节点名称" "$link_name_raw"
-            printf "  %-14s %s\n" "服务器地址" "$ip"
-            printf "  %-14s %s\n" "端口" "$port"
-            printf "  %-14s %s\n" "加密方式" "$method"
-            printf "  %-14s %s\n" "密钥" "$password"
+            printf "  节点名称      ${cyan}%s${none}\n" "$link_name_raw"
+            printf "  服务器地址    ${cyan}%s${none}\n" "$ip"
+            printf "  端口          ${cyan}%s${none}\n" "$port"
+            printf "  加密方式      ${cyan}%s${none}\n" "$method"
+            printf "  密钥          ${cyan}%s${none}\n" "$password"
         fi
     fi
 
