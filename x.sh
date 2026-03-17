@@ -27,6 +27,9 @@ readonly magenta='\e[95m' cyan='\e[96m' none='\e[0m'
 xray_status_info=""
 is_quiet=false
 
+# 允许自动探测 xray 实际路径（不同安装环境可能不在 /usr/local/bin/xray）
+XRAY_BIN="${xray_binary_path}"
+
 # --- 自安装：保留 xray 快捷键入口 ---
 install_self() {
     # 1) 确保脚本在 /root/x.sh（允许你从任意路径执行一次后“固定”到 /root/x.sh）
@@ -134,13 +137,28 @@ pre_check() {
     fi
 }
 
+detect_xray_binary() {
+    # 优先使用 command -v，其次 fallback 到默认路径
+    if command -v xray &>/dev/null; then
+        XRAY_BIN="$(command -v xray)"
+        return 0
+    fi
+    if [[ -x "$xray_binary_path" ]]; then
+        XRAY_BIN="$xray_binary_path"
+        return 0
+    fi
+    XRAY_BIN="$xray_binary_path"
+    return 1
+}
+
 check_xray_status() {
-    if [[ ! -f "$xray_binary_path" || ! -x "$xray_binary_path" ]]; then
+    detect_xray_binary >/dev/null 2>&1 || true
+    if [[ ! -f "$XRAY_BIN" || ! -x "$XRAY_BIN" ]]; then
         xray_status_info=" Xray 状态: ${red}未安装${none}"
         return
     fi
     local xray_version service_status
-    xray_version=$("$xray_binary_path" version 2>/dev/null | head -n 1 | awk '{print $2}' || echo "未知")
+    xray_version=$("$XRAY_BIN" version 2>/dev/null | head -n 1 | awk '{print $2}' || echo "未知")
     if systemctl is-active --quiet xray 2>/dev/null; then
         service_status="${green}运行中${none}"
     else
@@ -150,13 +168,44 @@ check_xray_status() {
 }
 
 quick_status() {
-    if [[ ! -f "$xray_binary_path" ]]; then
+    detect_xray_binary >/dev/null 2>&1 || true
+    if [[ ! -f "$XRAY_BIN" ]]; then
         echo -e " ${red}●${none} 未安装"
         return
     fi
     local status_icon
     if systemctl is-active --quiet xray 2>/dev/null; then status_icon="${green}●${none}"; else status_icon="${red}●${none}"; fi
     echo -e " $status_icon Xray $(systemctl is-active xray 2>/dev/null || echo "inactive")"
+}
+
+generate_reality_keypair() {
+    # 输出两行：private_key\npublic_key
+    detect_xray_binary >/dev/null 2>&1 || true
+    if [[ ! -x "$XRAY_BIN" ]]; then
+        error "错误: 未找到 xray 可执行文件（期望: $XRAY_BIN）。"
+        return 1
+    fi
+
+    local out private_key public_key
+    out=$("$XRAY_BIN" x25519 2>&1 || true)
+
+    # 兼容多种输出格式：
+    # - Private key: xxx
+    # - Public key:  xxx
+    # - PrivateKey: xxx
+    # - PublicKey:  xxx
+    private_key=$(echo "$out" | awk -F':' 'tolower($1) ~ /private/ {gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2; exit}')
+    public_key=$(echo "$out" | awk -F':' 'tolower($1) ~ /public/  {gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2; exit}')
+
+    if [[ -z "$private_key" || -z "$public_key" ]]; then
+        error "生成 Reality 密钥对失败：无法从 xray x25519 输出解析密钥。"
+        echo -e "${yellow}--- xray x25519 原始输出（便于排查）---${none}"
+        echo "$out" | sed 's/^/  /'
+        echo -e "${yellow}----------------------------------------${none}"
+        return 1
+    fi
+
+    printf "%s\n%s\n" "$private_key" "$public_key"
 }
 
 # --- Reality shortId (shortkey) 随机生成 ---
@@ -454,9 +503,9 @@ add_vless_to_ss() {
     prompt_for_vless_config vless_port vless_uuid vless_domain "$default_vless_port"
 
     info "正在生成 Reality 密钥对..."
-    key_pair=$("$xray_binary_path" x25519)
-    private_key=$(echo "$key_pair" | awk -F: '/Private/ {print $2}' | xargs | head -n 1)
-    public_key=$(echo "$key_pair" | awk -F: '/Public/ {print $2}' | xargs | head -n 1)
+    key_pair=$(generate_reality_keypair) || return 1
+    private_key=$(echo "$key_pair" | sed -n '1p')
+    public_key=$(echo "$key_pair" | sed -n '2p')
     shortid=$(generate_shortid)
 
     if [[ -z "$private_key" || -z "$public_key" ]]; then
@@ -499,10 +548,11 @@ install_dual() {
 }
 
 update_xray() {
-    if [[ ! -f "$xray_binary_path" ]]; then error "错误: Xray 未安装。" && return; fi
+    detect_xray_binary >/dev/null 2>&1 || true
+    if [[ ! -f "$XRAY_BIN" ]]; then error "错误: Xray 未安装。" && return; fi
     info "正在检查最新版本..."
     local current_version latest_version
-    current_version=$("$xray_binary_path" version | head -n 1 | awk '{print $2}')
+    current_version=$("$XRAY_BIN" version | head -n 1 | awk '{print $2}')
     latest_version=$(curl -s https://api.github.com/repos/XTLS/Xray-core/releases/latest | jq -r '.tag_name' | sed 's/v//' || echo "")
     [[ -z "$latest_version" ]] && error "获取最新版本号失败，请检查网络或稍后重试。" && return
     info "当前版本: ${cyan}${current_version}${none}，最新版本: ${cyan}${latest_version}${none}"
@@ -514,7 +564,8 @@ update_xray() {
 }
 
 uninstall_xray() {
-    if [[ ! -f "$xray_binary_path" ]]; then error "错误: Xray 未安装。" && return; fi
+    detect_xray_binary >/dev/null 2>&1 || true
+    if [[ ! -f "$XRAY_BIN" ]]; then error "错误: Xray 未安装。" && return; fi
     read -r -p "$(echo -e "${yellow}您确定要卸载 Xray 吗？这将删除所有配置！[Y/n]: ${none}")" confirm || true
     if [[ "$confirm" =~ ^[nN]$ ]]; then info "操作已取消。"; return; fi
     info "正在卸载 Xray..."
@@ -632,7 +683,8 @@ modify_ss_config() {
 }
 
 restart_xray() {
-    if [[ ! -f "$xray_binary_path" ]]; then error "错误: Xray 未安装。" && return 1; fi
+    detect_xray_binary >/dev/null 2>&1 || true
+    if [[ ! -f "$XRAY_BIN" ]]; then error "错误: Xray 未安装。" && return 1; fi
     info "正在重启 Xray 服务..."
     if ! systemctl restart xray; then
         error "尝试重启 Xray 服务失败！"
@@ -651,7 +703,8 @@ restart_xray() {
 }
 
 view_xray_log() {
-    if [[ ! -f "$xray_binary_path" ]]; then error "错误: Xray 未安装。" && return; fi
+    detect_xray_binary >/dev/null 2>&1 || true
+    if [[ ! -f "$XRAY_BIN" ]]; then error "错误: Xray 未安装。" && return; fi
     info "正在显示 Xray 实时日志... 按 Ctrl+C 退出。"
     journalctl -u xray -f --no-pager
 }
@@ -754,9 +807,9 @@ run_install_vless() {
 
     info "正在生成 Reality 密钥对..."
     local key_pair private_key public_key shortid vless_inbound
-    key_pair=$("$xray_binary_path" x25519)
-    private_key=$(echo "$key_pair" | awk -F: '/Private/ {print $2}' | xargs | head -n 1)
-    public_key=$(echo "$key_pair" | awk -F: '/Public/ {print $2}' | xargs | head -n 1)
+    key_pair=$(generate_reality_keypair) || exit 1
+    private_key=$(echo "$key_pair" | sed -n '1p')
+    public_key=$(echo "$key_pair" | sed -n '2p')
     shortid=$(generate_shortid)
 
     if [[ -z "$private_key" || -z "$public_key" ]]; then
@@ -799,9 +852,9 @@ run_install_dual() {
 
     info "正在生成 Reality 密钥对..."
     local key_pair private_key public_key shortid vless_inbound ss_inbound
-    key_pair=$("$xray_binary_path" x25519)
-    private_key=$(echo "$key_pair" | awk -F: '/Private/ {print $2}' | xargs | head -n 1)
-    public_key=$(echo "$key_pair" | awk -F: '/Public/ {print $2}' | xargs | head -n 1)
+    key_pair=$(generate_reality_keypair) || exit 1
+    private_key=$(echo "$key_pair" | sed -n '1p')
+    public_key=$(echo "$key_pair" | sed -n '2p')
     shortid=$(generate_shortid)
 
     if [[ -z "$private_key" || -z "$public_key" ]]; then
@@ -857,6 +910,7 @@ main_menu() {
 
 main() {
     pre_check
+    detect_xray_binary >/dev/null 2>&1 || true
     install_self
     main_menu
 }
