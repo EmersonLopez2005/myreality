@@ -189,19 +189,27 @@ generate_reality_keypair() {
     local out private_key public_key
     out=$("$XRAY_BIN" x25519 2>&1 || true)
 
-    # 兼容多种输出格式：
+    # 兼容多种输出格式（不同 xray 版本可能返回不同字段名）：
     # - Private key: xxx
     # - Public key:  xxx
     # - PrivateKey: xxx
     # - PublicKey:  xxx
+    # - Hash32:     xxx   (部分版本用 Hash32 作为可用于 Reality 的公钥/指纹字段)
     private_key=$(echo "$out" | awk -F':' 'tolower($1) ~ /private/ {gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2; exit}')
+
+    # publicKey 优先，其次 Hash32
     public_key=$(echo "$out" | awk -F':' 'tolower($1) ~ /public/  {gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2; exit}')
+    if [[ -z "$public_key" ]]; then
+        public_key=$(echo "$out" | awk -F':' 'tolower($1) ~ /hash32/ {gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2; exit}')
+    fi
 
     if [[ -z "$private_key" || -z "$public_key" ]]; then
         error "生成 Reality 密钥对失败：无法从 xray x25519 输出解析密钥。"
-        echo -e "${yellow}--- xray x25519 原始输出（便于排查）---${none}"
-        echo "$out" | sed 's/^/  /'
-        echo -e "${yellow}----------------------------------------${none}"
+        {
+            echo -e "${yellow}--- xray x25519 原始输出（便于排查）---${none}"
+            echo "$out" | sed 's/^/  /'
+            echo -e "${yellow}----------------------------------------${none}"
+        } >&2
         return 1
     fi
 
