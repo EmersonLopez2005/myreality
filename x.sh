@@ -20,6 +20,8 @@ readonly xray_install_script_url="https://github.com/XTLS/Xray-install/raw/main/
 
 # --- BBR / 网络优化 ---
 readonly BBR_CONF_FILE="/etc/sysctl.d/99-bbr.conf"
+readonly BBR_STATE_DIR="/var/lib/xray-menu"
+readonly BBR_STATE_FILE="${BBR_STATE_DIR}/bbr-preapply.state"
 readonly BBR_MODULE_VERSION="bbr-module v1.1.0"
 
 # --- 快捷命令 (alias/备用命令) ---
@@ -105,6 +107,15 @@ error() {
 info() { [[ "$is_quiet" = false ]] && echo -e "\n${yellow}[!] $1${none}\n"; }
 success() { [[ "$is_quiet" = false ]] && echo -e "\n${green}[✔] $1${none}\n"; }
 warning() { [[ "$is_quiet" = false ]] && echo -e "\n${yellow}[⚠] $1${none}\n"; }
+
+warning() { [[ "$is_quiet" = false ]] && echo -e "\n${yellow}[!] $1${none}\n" >&2; }
+
+warning_stderr() {
+    local saved_quiet="$is_quiet"
+    is_quiet=false
+    warning "$1" >&2
+    is_quiet="$saved_quiet"
+}
 
 spinner() {
     local pid="$1"
@@ -215,7 +226,7 @@ generate_reality_keypair() {
         return 1
     fi
 
-    local out private_key public_key
+    local out private_key reality_client_key
     out=$("$XRAY_BIN" x25519 2>&1 || true)
 
     # 兼容多种输出格式（不同 xray 版本可能返回不同字段名）：
@@ -227,12 +238,9 @@ generate_reality_keypair() {
     private_key=$(echo "$out" | awk -F':' 'tolower($1) ~ /private/ {gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2; exit}')
 
     # publicKey 优先，其次 Hash32
-    public_key=$(echo "$out" | awk -F':' 'tolower($1) ~ /public/  {gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2; exit}')
-    if [[ -z "$public_key" ]]; then
-        public_key=$(echo "$out" | awk -F':' 'tolower($1) ~ /hash32/ {gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2; exit}')
-    fi
+    reality_client_key=$(echo "$out" | awk -F':' 'tolower($1) ~ /(password|public[[:space:]]*key)/ {gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2; exit}')
 
-    if [[ -z "$private_key" || -z "$public_key" ]]; then
+    if [[ -z "$private_key" || -z "$reality_client_key" ]]; then
         error "生成 Reality 密钥对失败：无法从 xray x25519 输出解析密钥。"
         {
             echo -e "${yellow}--- xray x25519 原始输出（便于排查）---${none}"
@@ -242,10 +250,40 @@ generate_reality_keypair() {
         return 1
     fi
 
-    printf "%s\n%s\n" "$private_key" "$public_key"
+    printf "%s\n%s\n" "$private_key" "$reality_client_key"
 }
 
 # --- Reality shortId (shortkey) 随机生成 ---
+derive_reality_client_key_from_private_key() {
+    local private_key="$1"
+    detect_xray_binary >/dev/null 2>&1 || true
+    [[ -z "$private_key" || ! -x "$XRAY_BIN" ]] && return 1
+
+    local out reality_client_key
+    out=$("$XRAY_BIN" x25519 -i "$private_key" 2>&1 || true)
+    reality_client_key=$(echo "$out" | awk -F':' 'tolower($1) ~ /(password|public[[:space:]]*key)/ {gsub(/^[ \t]+|[ \t]+$/,"",$2); print $2; exit}')
+    [[ -n "$reality_client_key" ]] || return 1
+    printf "%s\n" "$reality_client_key"
+}
+
+get_reality_client_key_from_inbound() {
+    local inbound_json="$1"
+    local private_key stored_key
+
+    private_key=$(echo "$inbound_json" | jq -r '.streamSettings.realitySettings.privateKey // empty')
+    if [[ -n "$private_key" ]]; then
+        stored_key=$(derive_reality_client_key_from_private_key "$private_key" || true)
+        if [[ -n "$stored_key" ]]; then
+            printf "%s\n" "$stored_key"
+            return 0
+        fi
+    fi
+
+    stored_key=$(echo "$inbound_json" | jq -r '.streamSettings.realitySettings.password // .streamSettings.realitySettings.publicKey // empty')
+    [[ -n "$stored_key" ]] || return 1
+    printf "%s\n" "$stored_key"
+}
+
 generate_shortid() {
     # Reality shortId 推荐使用 8 个 hex 字符（4字节）
     local sid
@@ -258,7 +296,42 @@ generate_shortid() {
 
 # --- 核心配置生成函数 ---
 generate_ss_key() {
-    openssl rand -base64 16
+    openssl rand -base64 16 | tr -d '\r\n'
+}
+
+base64_encode_inline() {
+    printf '%s' "$1" | openssl base64 -A
+}
+
+is_valid_ss2022_password() {
+    local password="$1" decoded_len rc=0
+    decoded_len=$(printf '%s' "$password" | openssl base64 -d -A 2>/dev/null | wc -c | tr -d '[:space:]') || rc=$?
+    [[ "$rc" -eq 0 && "$decoded_len" == "16" ]]
+}
+
+prompt_for_ss_password() {
+    local -n p_pass="$1"
+    local current_pass="${2:-}"
+    local prompt_text="$3"
+
+    while true; do
+        read -r -p "$prompt_text" p_pass || true
+        if [[ -z "$p_pass" ]]; then
+            if [[ -n "$current_pass" ]]; then
+                p_pass="$current_pass"
+                return 0
+            fi
+            p_pass=$(generate_ss_key)
+            info "宸蹭负鎮ㄧ敓鎴愰殢鏈哄瘑閽? ${cyan}${p_pass}${none}"
+            return 0
+        fi
+
+        if is_valid_ss2022_password "$p_pass"; then
+            return 0
+        fi
+
+        error "Invalid SS2022 key. Enter a 16-byte Base64 key, or leave it blank to auto-generate one."
+    done
 }
 
 # ==============================================================================
@@ -299,7 +372,7 @@ bbr_get_system_info() {
 bbr_calculate_parameters() {
     # 基础连接数设置 - 代理服务器通常需要更多连接跟踪
     if [[ "${BBR_TOTAL_MEM:-0}" -le 512 ]]; then
-        BBR_VM_TIER="入门级(≤512MB)"
+        BBR_VM_TIER="entry-level <=512MB"
         BBR_RMEM_MAX="16777216"   # 16MB
         BBR_WMEM_MAX="16777216"
         BBR_TCP_MEM_MAX="16777216"
@@ -307,7 +380,7 @@ bbr_calculate_parameters() {
         BBR_FILE_MAX="65535"
         BBR_CONNTRACK_MAX="65536"
     elif [[ "${BBR_TOTAL_MEM:-0}" -le 1024 ]]; then
-        BBR_VM_TIER="基础级(1GB)"
+        BBR_VM_TIER="basic 1GB"
         BBR_RMEM_MAX="33554432"   # 32MB
         BBR_WMEM_MAX="33554432"
         BBR_TCP_MEM_MAX="33554432"
@@ -315,7 +388,7 @@ bbr_calculate_parameters() {
         BBR_FILE_MAX="524288"
         BBR_CONNTRACK_MAX="262144"
     elif [[ "${BBR_TOTAL_MEM:-0}" -le 4096 ]]; then
-        BBR_VM_TIER="进阶级(2GB-4GB)"
+        BBR_VM_TIER="advanced 2GB-4GB"
         BBR_RMEM_MAX="67108864"   # 64MB
         BBR_WMEM_MAX="67108864"
         BBR_TCP_MEM_MAX="67108864"
@@ -323,8 +396,8 @@ bbr_calculate_parameters() {
         BBR_FILE_MAX="1048576"
         BBR_CONNTRACK_MAX="524288"
     else
-        BBR_VM_TIER="专业级(>4GB)"
-        # 限制最大缓冲区，避免单连接吃光内存，注重并发总量
+        BBR_VM_TIER="professional >4GB"
+        # Limit per-socket buffer growth to avoid a few connections consuming all RAM.
         BBR_RMEM_MAX="134217728"  # 128MB
         BBR_WMEM_MAX="134217728"
         BBR_TCP_MEM_MAX="134217728"
@@ -358,6 +431,66 @@ bbr_manage_backups() {
         # 保留最近 3 个备份
         ls -t "$BBR_CONF_FILE.bak_"* 2>/dev/null | tail -n +4 | xargs -r rm
     fi
+}
+
+bbr_extract_keys_from_file() {
+    local file="$1"
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" ]] && continue
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        if [[ "$line" =~ ^[[:space:]]*([a-zA-Z0-9_.]+)[[:space:]]*= ]]; then
+            printf "%s\n" "${BASH_REMATCH[1]}"
+        fi
+    done < "$file"
+}
+
+bbr_capture_runtime_state() {
+    local conf_file="$1"
+    mkdir -p "$BBR_STATE_DIR"
+
+    local tmp key value
+    tmp=$(mktemp "${BBR_STATE_FILE}.tmp.XXXXXX")
+
+    {
+        echo "# Captured before applying ${BBR_CONF_FILE}"
+        echo "# $(date)"
+    } > "$tmp"
+
+    while IFS= read -r key || [[ -n "$key" ]]; do
+        [[ -z "$key" ]] && continue
+        value=$(sysctl -n "$key" 2>/dev/null || true)
+        if [[ -n "$value" ]]; then
+            printf "%s = %s\n" "$key" "$value" >> "$tmp"
+        else
+            printf "# missing %s\n" "$key" >> "$tmp"
+        fi
+    done < <(bbr_extract_keys_from_file "$conf_file")
+
+    chmod 600 "$tmp" 2>/dev/null || true
+    mv -f "$tmp" "$BBR_STATE_FILE"
+}
+
+bbr_restore_runtime_state() {
+    local state_file="$1"
+    [[ -f "$state_file" ]] || return 0
+
+    local restored=0 failed=0
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        [[ -z "$line" ]] && continue
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+
+        if [[ "$line" =~ ^[[:space:]]*([a-zA-Z0-9_.]+)[[:space:]]*=[[:space:]]*(.+)[[:space:]]*$ ]]; then
+            local key="${BASH_REMATCH[1]}"
+            local value="${BASH_REMATCH[2]}"
+            if sysctl -w "${key}=${value}" >/dev/null 2>&1; then
+                ((restored++))
+            else
+                ((failed++))
+            fi
+        fi
+    done < "$state_file"
+
+    echo "$restored|$failed"
 }
 
 bbr_clamp_int() {
@@ -426,28 +559,28 @@ bbr_apply_profile_tuning() {
 
 bbr_profile_label() {
     case "$1" in
-        high_concurrency) echo "高并发" ;;
-        memory_saving) echo "省内存" ;;
-        *) echo "均衡" ;;
+        high_concurrency) echo "high-concurrency" ;;
+        memory_saving) echo "memory-saving" ;;
+        *) echo "balanced" ;;
     esac
 }
 
 bbr_prompt_profile() {
     local choice
-    echo -e "${cyan}请选择优化模式${none}"
+    echo -e "${cyan}Choose optimization profile${none}"
     draw_divider
-    printf "  ${green}%-2s${none} %-35s\n" "1." "均衡 (默认推荐)"
-    printf "  ${yellow}%-2s${none} %-35s\n" "2." "高并发 (更多连接/队列/conntrack)"
-    printf "  ${magenta}%-2s${none} %-35s\n" "3." "省内存 (更保守，适合小鸡/容器)"
+    printf "  ${green}%-2s${none} %-35s\n" "1." "balanced (recommended)"
+    printf "  ${yellow}%-2s${none} %-35s\n" "2." "high concurrency"
+    printf "  ${magenta}%-2s${none} %-35s\n" "3." "memory saving"
     draw_divider
-    read -r -p " 请输入选项 [1-3，默认1]: " choice || true
+    read -r -p " Select [1-3, default 1]: " choice || true
     case "$choice" in
         2) BBR_PROFILE="high_concurrency" ;;
         3) BBR_PROFILE="memory_saving" ;;
         *) BBR_PROFILE="balanced" ;;
     esac
 
-    read -r -p "  是否开启 tcp_tw_reuse (高并发优化，默认开启) [Y/n]: " choice || true
+    read -r -p "  Enable tcp_tw_reuse? [Y/n]: " choice || true
     if [[ "$choice" =~ ^[nN]$ ]]; then
         BBR_TW_REUSE="0"
     else
@@ -606,6 +739,7 @@ bbr_apply_optimizations() {
     # 原子写：先写 tmp，再 mv 覆盖
     local tmp
     tmp=$(bbr_build_conf_file "$profile" "$tw_reuse")
+    bbr_capture_runtime_state "$tmp"
     chmod 644 "$tmp" 2>/dev/null || true
     mv -f "$tmp" "$BBR_CONF_FILE"
 
@@ -649,6 +783,31 @@ bbr_uninstall() {
     # 重载所有 sysctl.d（确保删除后生效）
     sysctl --system >/dev/null 2>&1 || true
     success "已移除优化配置（已保留 removed 备份）。"
+}
+
+bbr_uninstall() {
+    if [[ ! -f "$BBR_CONF_FILE" ]]; then
+        warning "未发现 $BBR_CONF_FILE，无需卸载。"
+        return 0
+    fi
+
+    info "正在卸载/回滚 BBR 网络优化配置..."
+    mv -f "$BBR_CONF_FILE" "$BBR_CONF_FILE.removed_$(date +%F_%H-%M-%S)"
+
+    local restore_summary restored failed
+    sysctl --system >/dev/null 2>&1 || true
+    if [[ -f "$BBR_STATE_FILE" ]]; then
+        restore_summary=$(bbr_restore_runtime_state "$BBR_STATE_FILE")
+        restored=${restore_summary%%|*}
+        failed=${restore_summary#*|}
+        rm -f "$BBR_STATE_FILE"
+        success "已移除优化配置，并尝试恢复 ${restored} 项原始 sysctl 值。"
+        if [[ "$failed" != "0" ]]; then
+            warning "仍有 ${failed} 项 sysctl 未能恢复到应用前状态，如有异常可重启服务器。"
+        fi
+    else
+        success "已移除优化配置（未找到原始 sysctl 备份，如有残留可重启服务器）。"
+    fi
 }
 
 bbr_status() {
@@ -768,6 +927,7 @@ build_vless_inbound() {
                     "xver": 0,
                     "serverNames": [$domain],
                     "privateKey": $private_key,
+                    "password": $public_key,
                     "publicKey": $public_key,
                     "shortIds": [$shortid]
                 }
@@ -1159,7 +1319,7 @@ modify_vless_config() {
     current_uuid=$(echo "$vless_inbound" | jq -r '.settings.clients[0].id')
     current_domain=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.serverNames[0]')
     private_key=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.privateKey')
-    public_key=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.publicKey')
+    public_key=$(get_reality_client_key_from_inbound "$vless_inbound" || true)
     shortid=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.shortIds[0]')
 
     while true; do
@@ -1274,7 +1434,7 @@ view_all_info() {
         uuid=$(echo "$vless_inbound" | jq -r '.settings.clients[0].id')
         port=$(echo "$vless_inbound" | jq -r '.port')
         domain=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.serverNames[0]')
-        public_key=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.publicKey')
+        public_key=$(get_reality_client_key_from_inbound "$vless_inbound" || true)
         shortid=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.shortIds[0]')
 
         display_ip=$ip && [[ $ip =~ ":" ]] && display_ip="[$ip]"
@@ -1290,7 +1450,7 @@ view_all_info() {
             printf "    %s: ${cyan}%s${none}\n" "端口" "$port"
             printf "    %s: ${cyan}%s${none}\n" "UUID" "$uuid"
             printf "    %s: ${cyan}%s${none}\n" "SNI" "$domain"
-            printf "    %s: ${cyan}%s${none}\n" "PublicKey" "$public_key"
+            printf "    %s: ${cyan}%s${none}\n" "Password(pbk)" "$public_key"
             printf "    %s: ${cyan}%s${none}\n" "ShortId" "$shortid"
         fi
     fi
@@ -1412,6 +1572,125 @@ run_install_dual() {
 }
 
 # --- 主菜单与脚本入口 ---
+is_port_available() {
+    local port="$1"
+    is_valid_port "$port" || return 1
+
+    local tcp_in_use=false udp_in_use=false
+    if ss -H -ltn 2>/dev/null | awk -v p=":$port" '$4 ~ p"$" {found=1; exit} END{exit !found}'; then tcp_in_use=true; fi
+    if ss -H -lun 2>/dev/null | awk -v p=":$port" '($4 ~ p"$") || ($5 ~ p"$") {found=1; exit} END{exit !found}'; then udp_in_use=true; fi
+
+    if [[ "$tcp_in_use" = true || "$udp_in_use" = true ]]; then
+        local proto="TCP/UDP"
+        [[ "$tcp_in_use" = true && "$udp_in_use" = false ]] && proto="TCP"
+        [[ "$tcp_in_use" = false && "$udp_in_use" = true ]] && proto="UDP"
+        warning "端口 $port 已被 ${proto} 占用，建议选择其他端口"
+        return 1
+    fi
+
+    return 0
+}
+
+is_valid_domain() {
+    local domain="$1"
+    [[ "$domain" =~ ^([A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?\.)+[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]]
+}
+
+prompt_for_ss_config() {
+    local -n p_port="$1" p_pass="$2"
+    local default_port="${3:-8388}"
+
+    while true; do
+        read -r -p "$(echo -e " -> 请输入 Shadowsocks 端口 (默认: ${cyan}${default_port}${none}): ")" p_port || true
+        [[ -z "$p_port" ]] && p_port="$default_port"
+        if is_port_available "$p_port"; then break; fi
+    done
+    info "Shadowsocks 端口将使用 ${cyan}${p_port}${none}"
+
+    prompt_for_ss_password p_pass "" "$(echo -e " -> 请输入 Shadowsocks 密钥 (留空将自动生成): ")"
+}
+
+modify_ss_config() {
+    info "开始修改 Shadowsocks-2022 配置..."
+    local ss_inbound current_port current_password port password new_ss_inbound vless_inbound new_inbounds
+    ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path")
+    current_port=$(echo "$ss_inbound" | jq -r '.port')
+    current_password=$(echo "$ss_inbound" | jq -r '.settings.password')
+
+    while true; do
+        read -r -p "$(echo -e " -> 新端口 (当前: ${cyan}${current_port}${none}, 留空不改): ")" port || true
+        [[ -z "$port" ]] && port="$current_port"
+        if is_port_available "$port" || [[ "$port" == "$current_port" ]]; then break; fi
+    done
+
+    prompt_for_ss_password password "$current_password" "$(echo -e " -> 新密钥 (当前: ${cyan}${current_password}${none}, 留空不改): ")"
+
+    new_ss_inbound=$(build_ss_inbound "$port" "$password")
+    vless_inbound=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path" 2>/dev/null || true)
+    new_inbounds="[$new_ss_inbound]"
+    [[ -n "$vless_inbound" ]] && new_inbounds="[$vless_inbound, $new_ss_inbound]"
+
+    write_config "$new_inbounds"
+    if ! restart_xray; then return 1; fi
+    success "配置修改成功！"
+    view_all_info
+}
+
+execute_official_script() {
+    local args="$1" script_content="" curl_rc=0 pid
+    script_content=$(curl -fsSL "$xray_install_script_url" 2>/dev/null) || curl_rc=$?
+    if [[ "$curl_rc" -ne 0 || -z "$script_content" || ! "$script_content" =~ install-release ]]; then
+        error "下载 Xray 官方安装脚本失败或内容异常！请检查网络连接。"
+        return 1
+    fi
+
+    echo "$script_content" | bash -s -- $args &>/dev/null &
+    pid=$!
+    spinner "$pid"
+    if ! wait "$pid"; then return 1; fi
+}
+
+update_xray() {
+    detect_xray_binary >/dev/null 2>&1 || true
+    if [[ ! -f "$XRAY_BIN" ]]; then error "错误: Xray 未安装。" && return; fi
+    info "正在检查最新版本..."
+
+    local current_version latest_version yn
+    current_version=$("$XRAY_BIN" version 2>/dev/null | head -n 1 | awk '{print $2}' || true)
+    current_version=$(echo -n "$current_version" | tr -d '\r\n')
+    [[ -z "$current_version" ]] && current_version="未知"
+
+    latest_version=$(curl -fsSL --max-time 8 https://api.github.com/repos/XTLS/Xray-core/releases/latest 2>/dev/null \
+        | jq -r '.tag_name' 2>/dev/null \
+        | sed 's/^v//' || true)
+
+    if [[ -z "$latest_version" || "$latest_version" == "null" ]]; then
+        warning "获取最新版本号失败（可能是网络/DNS 或 GitHub API 限流）。"
+        echo -e "  当前版本: ${cyan}${current_version}${none}"
+        read -r -p "  是否仍然尝试执行官方更新脚本？[Y/n]: " yn || true
+        if [[ "$yn" =~ ^[nN]$ ]]; then
+            info "已取消更新。"
+            return 0
+        fi
+        info "开始执行官方更新脚本..."
+        if ! run_core_install; then return 1; fi
+        restart_xray || return 1
+        success "Xray 更新流程已执行完成（版本号请回到主菜单查看）。"
+        return 0
+    fi
+
+    info "当前版本: ${cyan}${current_version}${none}，最新版本: ${cyan}${latest_version}${none}"
+    if [[ "$current_version" == "$latest_version" ]]; then
+        success "您的 Xray 已是最新版本。"
+        return 0
+    fi
+
+    info "发现新版本，开始更新..."
+    if ! run_core_install; then return 1; fi
+    if ! restart_xray; then return 1; fi
+    success "Xray 更新成功！"
+}
+
 main_menu() {
     while true; do
         draw_menu_header
