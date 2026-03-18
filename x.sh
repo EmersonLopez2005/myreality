@@ -16,6 +16,7 @@ readonly BBR_STATE_FILE="${BBR_STATE_DIR}/bbr-preapply.state"
 readonly BBR_MODULE_VERSION="bbr-module v1.1.0"
 
 readonly MENU_BIN_SYMLINK="/usr/local/bin/xray-menu"
+readonly XRAY_ALIAS_PROFILE="/etc/profile.d/xray-shortcut.sh"
 
 readonly red='\e[91m'
 readonly green='\e[92m'
@@ -109,9 +110,17 @@ install_self() {
         *) rc_file="$HOME/.bashrc" ;;
     esac
 
-    if [[ -n "$rc_file" ]] && ! grep -qs "alias xray='bash ${SCRIPT_PATH}'" "$rc_file" 2>/dev/null; then
-        echo "alias xray='bash ${SCRIPT_PATH}'" >> "$rc_file"
+    local alias_line="alias xray='bash ${SCRIPT_PATH}'"
+
+    if [[ -n "$rc_file" ]] && ! grep -qsF "$alias_line" "$rc_file" 2>/dev/null; then
+        echo "$alias_line" >> "$rc_file"
     fi
+
+    cat > "$XRAY_ALIAS_PROFILE" <<EOF_ALIAS
+#!/usr/bin/env bash
+$alias_line
+EOF_ALIAS
+    chmod 644 "$XRAY_ALIAS_PROFILE" 2>/dev/null || true
 
     mkdir -p "$(dirname "$MENU_BIN_SYMLINK")"
     ln -sf "$SCRIPT_PATH" "$MENU_BIN_SYMLINK" 2>/dev/null || true
