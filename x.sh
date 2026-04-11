@@ -899,6 +899,39 @@ build_ss_inbound() {
         }'
 }
 
+get_vless_inbounds() {
+    [[ -f "$xray_config_path" ]] || return 0
+    jq -c '.inbounds[] | select(.protocol == "vless")' "$xray_config_path" 2>/dev/null || true
+}
+
+get_vless_inbound_by_network() {
+    local network="$1"
+    [[ -f "$xray_config_path" ]] || return 0
+    jq -c --arg network "$network" '.inbounds[] | select(.protocol == "vless" and (.streamSettings.network // "tcp") == $network)' "$xray_config_path" 2>/dev/null || true
+}
+
+get_ss_inbound() {
+    [[ -f "$xray_config_path" ]] || return 0
+    jq -c '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path" 2>/dev/null || true
+}
+
+build_inbounds_json() {
+    local vless_tcp_inbound="$1" xhttp_inbound="$2" ss_inbound="$3"
+    local inbounds_json="[]"
+
+    if [[ -n "$vless_tcp_inbound" ]]; then
+        inbounds_json=$(echo "$inbounds_json" | jq --argjson inbound "$vless_tcp_inbound" '. + [$inbound]')
+    fi
+    if [[ -n "$xhttp_inbound" ]]; then
+        inbounds_json=$(echo "$inbounds_json" | jq --argjson inbound "$xhttp_inbound" '. + [$inbound]')
+    fi
+    if [[ -n "$ss_inbound" ]]; then
+        inbounds_json=$(echo "$inbounds_json" | jq --argjson inbound "$ss_inbound" '. + [$inbound]')
+    fi
+
+    echo "$inbounds_json"
+}
+
 write_config() {
     local inbounds_json="$1"
     local config_content
@@ -1108,42 +1141,100 @@ clean_install_menu() {
 }
 
 install_menu() {
-    local vless_exists="" ss_exists="" vless_network="tcp"
-    local current_vless_label="VLESS-Reality" reinstall_func="install_vless_only"
+    local vless_tcp_exists="" vless_xhttp_exists="" ss_exists=""
     if [[ -f "$xray_config_path" ]]; then
-        vless_exists=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path" 2>/dev/null || true)
-        ss_exists=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path" 2>/dev/null || true)
-        if [[ -n "$vless_exists" ]]; then
-            vless_network=$(echo "$vless_exists" | jq -r '.streamSettings.network // "tcp"')
-            if [[ "$vless_network" == "xhttp" ]]; then
-                current_vless_label="VLESS-XHTTP-REALITY"
-                reinstall_func="install_xhttp_only"
-            fi
-        fi
+        vless_tcp_exists=$(get_vless_inbound_by_network "tcp")
+        vless_xhttp_exists=$(get_vless_inbound_by_network "xhttp")
+        ss_exists=$(get_ss_inbound)
     fi
 
     draw_menu_header
-    if [[ -n "$vless_exists" && -n "$ss_exists" ]]; then
-        success "当前已安装 ${current_vless_label} + Shadowsocks-2022 双协议。"
-        info "如需修改，请使用“修改配置”；如需重装，请先卸载后再安装。"
+    if [[ -n "$vless_tcp_exists" && -n "$vless_xhttp_exists" && -n "$ss_exists" ]]; then
+        success "当前已安装 VLESS-Reality + VLESS-XHTTP-REALITY + Shadowsocks-2022。"
+        info "如需调整，请使用“修改配置”；如需重装，请先卸载后再安装。"
         return
-    elif [[ -n "$vless_exists" && -z "$ss_exists" ]]; then
-        info "当前仅安装了 ${current_vless_label}。"
+    elif [[ -n "$vless_tcp_exists" && -n "$vless_xhttp_exists" && -z "$ss_exists" ]]; then
+        success "当前已安装 VLESS-Reality + VLESS-XHTTP-REALITY。"
         echo -e "${cyan} 请选择下一步操作${none}"
         draw_divider
         printf "  ${green}%-2s${none} %-35s\n" "1." "追加安装 Shadowsocks-2022"
-        printf "  ${red}%-2s${none} %-35s\n" "2." "覆盖重装 ${current_vless_label}"
+        printf "  ${yellow}%-2s${none} %-35s\n" "0." "返回主菜单"
+        draw_divider
+        read -r -p " 请输入选项 [0-1]: " choice || true
+        case "$choice" in
+            1) add_ss_to_vless || true ;;
+            0) return ;;
+            *) error "无效选项。" ;;
+        esac
+    elif [[ -n "$vless_tcp_exists" && -z "$vless_xhttp_exists" && -n "$ss_exists" ]]; then
+        info "当前已安装 VLESS-Reality + Shadowsocks-2022。"
+        echo -e "${cyan} 请选择下一步操作${none}"
+        draw_divider
+        printf "  ${blue}%-2s${none} %-35s\n" "1." "追加安装 VLESS-XHTTP-REALITY"
+        printf "  ${red}%-2s${none} %-35s\n" "2." "覆盖重装 VLESS-Reality"
         draw_divider
         printf "  ${yellow}%-2s${none} %-35s\n" "0." "返回主菜单"
         draw_divider
         read -r -p " 请输入选项 [0-2]: " choice || true
         case "$choice" in
-            1) add_ss_to_vless || true ;;
-            2) ${reinstall_func} || true ;;
+            1) add_xhttp_to_stack || true ;;
+            2) install_dual || true ;;
             0) return ;;
             *) error "无效选项。" ;;
         esac
-    elif [[ -z "$vless_exists" && -n "$ss_exists" ]]; then
+    elif [[ -z "$vless_tcp_exists" && -n "$vless_xhttp_exists" && -n "$ss_exists" ]]; then
+        info "当前已安装 VLESS-XHTTP-REALITY + Shadowsocks-2022。"
+        echo -e "${cyan} 请选择下一步操作${none}"
+        draw_divider
+        printf "  ${green}%-2s${none} %-35s\n" "1." "追加安装 VLESS-Reality"
+        printf "  ${red}%-2s${none} %-35s\n" "2." "覆盖重装 VLESS-XHTTP-REALITY"
+        draw_divider
+        printf "  ${yellow}%-2s${none} %-35s\n" "0." "返回主菜单"
+        draw_divider
+        read -r -p " 请输入选项 [0-2]: " choice || true
+        case "$choice" in
+            1) add_vless_to_ss || true ;;
+            2) install_xhttp_dual || true ;;
+            0) return ;;
+            *) error "无效选项。" ;;
+        esac
+    elif [[ -n "$vless_tcp_exists" && -z "$vless_xhttp_exists" && -z "$ss_exists" ]]; then
+        info "当前仅安装了 VLESS-Reality。"
+        echo -e "${cyan} 请选择下一步操作${none}"
+        draw_divider
+        printf "  ${green}%-2s${none} %-35s\n" "1." "追加安装 Shadowsocks-2022"
+        printf "  ${blue}%-2s${none} %-35s\n" "2." "追加安装 VLESS-XHTTP-REALITY"
+        printf "  ${red}%-2s${none} %-35s\n" "3." "覆盖重装 VLESS-Reality"
+        draw_divider
+        printf "  ${yellow}%-2s${none} %-35s\n" "0." "返回主菜单"
+        draw_divider
+        read -r -p " 请输入选项 [0-3]: " choice || true
+        case "$choice" in
+            1) add_ss_to_vless || true ;;
+            2) add_xhttp_to_stack || true ;;
+            3) install_vless_only || true ;;
+            0) return ;;
+            *) error "无效选项。" ;;
+        esac
+    elif [[ -z "$vless_tcp_exists" && -n "$vless_xhttp_exists" && -z "$ss_exists" ]]; then
+        info "当前仅安装了 VLESS-XHTTP-REALITY。"
+        echo -e "${cyan} 请选择下一步操作${none}"
+        draw_divider
+        printf "  ${green}%-2s${none} %-35s\n" "1." "追加安装 Shadowsocks-2022"
+        printf "  ${blue}%-2s${none} %-35s\n" "2." "追加安装 VLESS-Reality"
+        printf "  ${red}%-2s${none} %-35s\n" "3." "覆盖重装 VLESS-XHTTP-REALITY"
+        draw_divider
+        printf "  ${yellow}%-2s${none} %-35s\n" "0." "返回主菜单"
+        draw_divider
+        read -r -p " 请输入选项 [0-3]: " choice || true
+        case "$choice" in
+            1) add_ss_to_vless || true ;;
+            2) add_vless_to_ss || true ;;
+            3) install_xhttp_only || true ;;
+            0) return ;;
+            *) error "无效选项。" ;;
+        esac
+    elif [[ -z "$vless_tcp_exists" && -z "$vless_xhttp_exists" && -n "$ss_exists" ]]; then
         info "当前仅安装了 Shadowsocks-2022。"
         echo -e "${cyan} 请选择下一步操作${none}"
         draw_divider
@@ -1193,10 +1284,11 @@ add_vless_to_ss() {
         return 1
     fi
 
-    local ss_inbound ss_port default_vless_port vless_port vless_uuid vless_domain
-    local key_pair private_key public_key shortid vless_inbound
+    local ss_inbound xhttp_inbound ss_port default_vless_port vless_port vless_uuid vless_domain
+    local key_pair private_key public_key shortid vless_inbound new_inbounds
 
-    ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path" 2>/dev/null || true)
+    ss_inbound=$(get_ss_inbound)
+    xhttp_inbound=$(get_vless_inbound_by_network "xhttp")
     ss_port=$(echo "$ss_inbound" | jq -r '.port')
     default_vless_port=$([[ "$ss_port" == "8388" ]] && echo 443 || echo $((ss_port - 1)))
 
@@ -1213,9 +1305,52 @@ add_vless_to_ss() {
     fi
 
     vless_inbound=$(build_vless_inbound "$vless_port" "$vless_uuid" "$vless_domain" "$private_key" "$shortid")
-    write_config "[$vless_inbound, $ss_inbound]"
+    new_inbounds=$(build_inbounds_json "$vless_inbound" "$xhttp_inbound" "$ss_inbound")
+    write_config "$new_inbounds"
     restart_xray || return 1
     success "VLESS-Reality 已追加安装完成。"
+    view_all_info
+}
+
+add_xhttp_to_stack() {
+    info "开始追加安装 VLESS-XHTTP-REALITY..."
+    if [[ -z "$(get_public_ip || true)" ]]; then
+        error "无法获取公网 IP，操作中止，请检查网络连接。"
+        return 1
+    fi
+
+    local vless_inbound ss_inbound default_port xhttp_port xhttp_uuid xhttp_domain xhttp_path xhttp_host
+    local key_pair private_key public_key shortid xhttp_inbound new_inbounds
+
+    vless_inbound=$(get_vless_inbound_by_network "tcp")
+    ss_inbound=$(get_ss_inbound)
+    if [[ -n "$vless_inbound" ]]; then
+        default_port=$(echo "$vless_inbound" | jq -r '.port')
+    elif [[ -n "$ss_inbound" ]]; then
+        local ss_port
+        ss_port=$(echo "$ss_inbound" | jq -r '.port')
+        default_port=$([[ "$ss_port" == "8388" ]] && echo 443 || echo $((ss_port - 1)))
+    else
+        default_port=443
+    fi
+
+    prompt_for_xhttp_config xhttp_port xhttp_uuid xhttp_domain xhttp_path xhttp_host "$default_port"
+    info "正在生成 Reality 密钥对..."
+    key_pair=$(generate_reality_keypair) || return 1
+    private_key=$(echo "$key_pair" | sed -n '1p')
+    public_key=$(echo "$key_pair" | sed -n '2p')
+    shortid=$(generate_shortid)
+
+    if [[ -z "$private_key" || -z "$public_key" ]]; then
+        error "生成 Reality 密钥对失败，请检查 Xray 核心是否正常。"
+        return 1
+    fi
+
+    xhttp_inbound=$(build_xhttp_inbound "$xhttp_port" "$xhttp_uuid" "$xhttp_domain" "$private_key" "$shortid" "$xhttp_path" "$xhttp_host")
+    new_inbounds=$(build_inbounds_json "$vless_inbound" "$xhttp_inbound" "$ss_inbound")
+    write_config "$new_inbounds"
+    restart_xray || return 1
+    success "VLESS-XHTTP-REALITY 已追加安装完成。"
     view_all_info
 }
 
@@ -1461,33 +1596,81 @@ modify_config_menu() {
         return 1
     fi
 
-    local vless_exists="" ss_exists="" vless_label="VLESS-Reality"
-    vless_exists=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path" 2>/dev/null || true)
-    ss_exists=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path" 2>/dev/null || true)
-    if [[ -n "$vless_exists" ]]; then
-        local vless_network
-        vless_network=$(echo "$vless_exists" | jq -r '.streamSettings.network // "tcp"')
-        [[ "$vless_network" == "xhttp" ]] && vless_label="VLESS-XHTTP-REALITY"
-    fi
+    local vless_tcp_exists="" vless_xhttp_exists="" ss_exists=""
+    vless_tcp_exists=$(get_vless_inbound_by_network "tcp")
+    vless_xhttp_exists=$(get_vless_inbound_by_network "xhttp")
+    ss_exists=$(get_ss_inbound)
 
-    if [[ -n "$vless_exists" && -n "$ss_exists" ]]; then
+    if [[ -n "$vless_tcp_exists" && -n "$vless_xhttp_exists" && -n "$ss_exists" ]]; then
         draw_menu_header
         echo -e "${cyan} 请选择要修改的协议配置${none}"
         draw_divider
-        printf "  ${green}%-2s${none} %-35s\n" "1." "$vless_label"
+        printf "  ${green}%-2s${none} %-35s\n" "1." "VLESS-Reality"
+        printf "  ${blue}%-2s${none} %-35s\n" "2." "VLESS-XHTTP-REALITY"
+        printf "  ${cyan}%-2s${none} %-35s\n" "3." "Shadowsocks-2022"
+        draw_divider
+        printf "  ${yellow}%-2s${none} %-35s\n" "0." "返回主菜单"
+        draw_divider
+        read -r -p " 请输入选项 [0-3]: " choice || true
+        case "$choice" in
+            1) modify_vless_config "tcp" || true ;;
+            2) modify_vless_config "xhttp" || true ;;
+            3) modify_ss_config || true ;;
+            0) return ;;
+            *) error "无效选项。" ;;
+        esac
+    elif [[ -n "$vless_tcp_exists" && -n "$vless_xhttp_exists" ]]; then
+        draw_menu_header
+        echo -e "${cyan} 请选择要修改的协议配置${none}"
+        draw_divider
+        printf "  ${green}%-2s${none} %-35s\n" "1." "VLESS-Reality"
+        printf "  ${blue}%-2s${none} %-35s\n" "2." "VLESS-XHTTP-REALITY"
+        draw_divider
+        printf "  ${yellow}%-2s${none} %-35s\n" "0." "返回主菜单"
+        draw_divider
+        read -r -p " 请输入选项 [0-2]: " choice || true
+        case "$choice" in
+            1) modify_vless_config "tcp" || true ;;
+            2) modify_vless_config "xhttp" || true ;;
+            0) return ;;
+            *) error "无效选项。" ;;
+        esac
+    elif [[ -n "$vless_tcp_exists" && -n "$ss_exists" ]]; then
+        draw_menu_header
+        echo -e "${cyan} 请选择要修改的协议配置${none}"
+        draw_divider
+        printf "  ${green}%-2s${none} %-35s\n" "1." "VLESS-Reality"
         printf "  ${cyan}%-2s${none} %-35s\n" "2." "Shadowsocks-2022"
         draw_divider
         printf "  ${yellow}%-2s${none} %-35s\n" "0." "返回主菜单"
         draw_divider
         read -r -p " 请输入选项 [0-2]: " choice || true
         case "$choice" in
-            1) modify_vless_config || true ;;
+            1) modify_vless_config "tcp" || true ;;
             2) modify_ss_config || true ;;
             0) return ;;
             *) error "无效选项。" ;;
         esac
-    elif [[ -n "$vless_exists" ]]; then
-        modify_vless_config
+    elif [[ -n "$vless_xhttp_exists" && -n "$ss_exists" ]]; then
+        draw_menu_header
+        echo -e "${cyan} 请选择要修改的协议配置${none}"
+        draw_divider
+        printf "  ${blue}%-2s${none} %-35s\n" "1." "VLESS-XHTTP-REALITY"
+        printf "  ${cyan}%-2s${none} %-35s\n" "2." "Shadowsocks-2022"
+        draw_divider
+        printf "  ${yellow}%-2s${none} %-35s\n" "0." "返回主菜单"
+        draw_divider
+        read -r -p " 请输入选项 [0-2]: " choice || true
+        case "$choice" in
+            1) modify_vless_config "xhttp" || true ;;
+            2) modify_ss_config || true ;;
+            0) return ;;
+            *) error "无效选项。" ;;
+        esac
+    elif [[ -n "$vless_tcp_exists" ]]; then
+        modify_vless_config "tcp"
+    elif [[ -n "$vless_xhttp_exists" ]]; then
+        modify_vless_config "xhttp"
     elif [[ -n "$ss_exists" ]]; then
         modify_ss_config
     else
@@ -1496,10 +1679,15 @@ modify_config_menu() {
 }
 
 modify_vless_config() {
+    local target_network="${1:-tcp}"
     local vless_inbound current_port current_uuid current_domain private_key shortid current_network current_path current_host
-    local port uuid domain regenerate new_shortid new_vless_inbound ss_inbound new_inbounds path host
+    local port uuid domain regenerate new_shortid new_vless_inbound vless_tcp_inbound xhttp_inbound ss_inbound new_inbounds path host
 
-    vless_inbound=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path" 2>/dev/null || true)
+    vless_inbound=$(get_vless_inbound_by_network "$target_network")
+    if [[ -z "$vless_inbound" ]]; then
+        error "未找到对应的 VLESS 配置。"
+        return 1
+    fi
     current_port=$(echo "$vless_inbound" | jq -r '.port')
     current_uuid=$(echo "$vless_inbound" | jq -r '.settings.clients[0].id')
     current_domain=$(echo "$vless_inbound" | jq -r '.streamSettings.realitySettings.serverNames[0]')
@@ -1571,12 +1759,15 @@ modify_vless_config() {
 
     if [[ "$current_network" == "xhttp" ]]; then
         new_vless_inbound=$(build_xhttp_inbound "$port" "$uuid" "$domain" "$private_key" "$new_shortid" "$path" "$host")
+        vless_tcp_inbound=$(get_vless_inbound_by_network "tcp")
+        xhttp_inbound="$new_vless_inbound"
     else
         new_vless_inbound=$(build_vless_inbound "$port" "$uuid" "$domain" "$private_key" "$new_shortid")
+        vless_tcp_inbound="$new_vless_inbound"
+        xhttp_inbound=$(get_vless_inbound_by_network "xhttp")
     fi
-    ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path" 2>/dev/null || true)
-    new_inbounds="[$new_vless_inbound]"
-    [[ -n "$ss_inbound" ]] && new_inbounds="[$new_vless_inbound, $ss_inbound]"
+    ss_inbound=$(get_ss_inbound)
+    new_inbounds=$(build_inbounds_json "$vless_tcp_inbound" "$xhttp_inbound" "$ss_inbound")
 
     write_config "$new_inbounds"
     restart_xray || return 1
@@ -1590,8 +1781,8 @@ modify_vless_config() {
 
 modify_ss_config() {
     info "开始修改 Shadowsocks-2022 配置..."
-    local ss_inbound current_port current_password port password new_ss_inbound vless_inbound new_inbounds
-    ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path" 2>/dev/null || true)
+    local ss_inbound current_port current_password port password new_ss_inbound vless_tcp_inbound xhttp_inbound new_inbounds
+    ss_inbound=$(get_ss_inbound)
     current_port=$(echo "$ss_inbound" | jq -r '.port')
     current_password=$(echo "$ss_inbound" | jq -r '.settings.password')
 
@@ -1607,9 +1798,9 @@ modify_ss_config() {
     prompt_for_ss_password password "$current_password" " -> 新密钥 (当前: ${current_password}，留空不改): "
 
     new_ss_inbound=$(build_ss_inbound "$port" "$password")
-    vless_inbound=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path" 2>/dev/null || true)
-    new_inbounds="[$new_ss_inbound]"
-    [[ -n "$vless_inbound" ]] && new_inbounds="[$vless_inbound, $new_ss_inbound]"
+    vless_tcp_inbound=$(get_vless_inbound_by_network "tcp")
+    xhttp_inbound=$(get_vless_inbound_by_network "xhttp")
+    new_inbounds=$(build_inbounds_json "$vless_tcp_inbound" "$xhttp_inbound" "$new_ss_inbound")
 
     write_config "$new_inbounds"
     restart_xray || return 1
@@ -1680,8 +1871,8 @@ view_all_info() {
     local -a links_array=()
 
     local vless_inbound
-    vless_inbound=$(jq '.inbounds[] | select(.protocol == "vless")' "$xray_config_path" 2>/dev/null || true)
-    if [[ -n "$vless_inbound" ]]; then
+    while IFS= read -r vless_inbound; do
+        [[ -z "$vless_inbound" ]] && continue
         local uuid port domain public_key shortid link_name_raw link_name_encoded vless_url network xhttp_path xhttp_host
         uuid=$(echo "$vless_inbound" | jq -r '.settings.clients[0].id')
         port=$(echo "$vless_inbound" | jq -r '.port')
@@ -1711,6 +1902,7 @@ view_all_info() {
                 printf "  ShortId       ${cyan}%s${none}\n" "$shortid"
                 printf "  Path          ${cyan}%s${none}\n" "$xhttp_path"
                 [[ -n "$xhttp_host" ]] && printf "  Host          ${cyan}%s${none}\n" "$xhttp_host"
+                echo ""
             fi
         else
             link_name_raw="$host X-Reality"
@@ -1727,9 +1919,10 @@ view_all_info() {
                 printf "  SNI           ${cyan}%s${none}\n" "$domain"
                 printf "  PublicKey     ${cyan}%s${none}\n" "$public_key"
                 printf "  ShortId       ${cyan}%s${none}\n" "$shortid"
+                echo ""
             fi
         fi
-    fi
+    done < <(get_vless_inbounds)
 
     local ss_inbound
     ss_inbound=$(jq '.inbounds[] | select(.protocol == "shadowsocks")' "$xray_config_path" 2>/dev/null || true)
