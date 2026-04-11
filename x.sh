@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-readonly SCRIPT_VERSION="x.sh v3.0.4"
+readonly SCRIPT_VERSION="x.sh v3.1"
 readonly SCRIPT_PATH="/root/x.sh"
 readonly SCRIPT_UPDATE_URL="https://raw.githubusercontent.com/EmersonLopez2005/myreality/main/x.sh"
 
