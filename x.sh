@@ -1059,10 +1059,11 @@ prompt_for_vless_config() {
 }
 
 prompt_for_xhttp_config() {
-    local -n p_port="$1" p_uuid="$2" p_sni="$3" p_path="$4" p_host="$5"
+    local port_var="$1" uuid_var="$2" sni_var="$3" path_var="$4" host_var="$5"
+    local -n p_port="$port_var" p_uuid="$uuid_var" p_sni="$sni_var" p_path="$path_var" p_host="$host_var"
     local default_port="${6:-443}"
 
-    prompt_for_vless_config p_port p_uuid p_sni "$default_port"
+    prompt_for_vless_config "$port_var" "$uuid_var" "$sni_var" "$default_port"
 
     while true; do
         read -r -p " -> 请输入 XHTTP 路径 (默认: /xhttp): " p_path || true
